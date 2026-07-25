@@ -44,10 +44,14 @@ def chunk_prose(text: str, *, target: int = TARGET_CHUNK_SIZE) -> list[str]:
     if not paragraphs:
         raise ValueError("text must contain something to speak")
 
-    units: list[str] = []
+    # (text, starts_a_new_paragraph). The flag is carried rather than inferred:
+    # a long paragraph is replaced by its sentences, so testing membership in
+    # `paragraphs` reports False for the sentence that *begins* one and the
+    # joiner silently merges it into the paragraph before it.
+    units: list[tuple[str, bool]] = []
     for paragraph in paragraphs:
         if len(paragraph) <= target:
-            units.append(paragraph)
+            units.append((paragraph, True))
             continue
         sentences = [
             sentence.strip()
@@ -56,12 +60,12 @@ def chunk_prose(text: str, *, target: int = TARGET_CHUNK_SIZE) -> list[str]:
         ]
         if any(len(sentence) > DISCORD_MESSAGE_LIMIT for sentence in sentences):
             raise ValueError("a sentence exceeds Discord's 2000 character limit")
-        units.extend(sentences)
+        units.extend((sentence, index == 0) for index, sentence in enumerate(sentences))
 
     chunks: list[str] = []
     current = ""
-    for unit in units:
-        separator = "\n\n" if current and unit in paragraphs else " "
+    for unit, starts_paragraph in units:
+        separator = "\n\n" if current and starts_paragraph else " "
         candidate = f"{current}{separator}{unit}" if current else unit
         if current and len(candidate) > target:
             chunks.append(current)

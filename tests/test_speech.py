@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.db import repo
+from bot.engine import speech
 from bot.engine.speech import DISCORD_MESSAGE_LIMIT, Speech, chunk_prose
 
 
@@ -158,3 +159,21 @@ async def test_speak_serializes_posts_per_channel(db_session: AsyncSession) -> N
     )
 
     assert webhook.max_active_sends == 1
+
+
+def test_paragraph_break_survives_a_split_paragraph() -> None:
+    """A long paragraph is replaced by its sentences, so the sentence that
+    *starts* it is no longer a known paragraph. Inferring the separator by
+    membership joined it to the previous paragraph with a space, silently
+    merging two paragraphs of an NPC's dialogue into one."""
+    short = "She sets the glass down."
+    long_paragraph = " ".join(f"Sentence number {n} of the reply." for n in range(60))
+    text = f"{short}\n\n{long_paragraph}"
+
+    chunks = speech.chunk_prose(text, target=400)
+
+    joined = "\n\n".join(chunks)
+    assert short in joined
+    # The short paragraph must not have been glued to the long one's opening.
+    assert f"{short} Sentence number 0" not in joined
+    assert f"{short}\n\nSentence number 0" in joined
