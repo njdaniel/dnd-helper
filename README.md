@@ -69,11 +69,33 @@ will run on less with a smaller model; NPC quality is the thing you trade away.
 git clone https://github.com/njdaniel/dnd-helper.git
 cd dnd-helper
 
+make install
+```
+
+Run `make` on its own to see every target.
+
+<details>
+<summary><b>No <code>make</code>?</b> (native Windows, or a minimal container)</summary>
+
+`make` is not installed by default on Windows. Either use WSL, or run the
+commands directly — every target is a one-liner:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
 pip install -e ".[dev]"
+
+alembic upgrade head               # make migrate
+python -m bot.main                 # make run
+pytest                             # make test
+ruff check . && ruff format --check . && mypy bot/engine bot/db && pytest
+                                   # make check
 ```
+
+`make check` is the one worth remembering: it is exactly the definition of done
+in [`CLAUDE.md`](CLAUDE.md), and the same four commands CI runs.
+
+</details>
 
 ### 2. Create the Discord application
 
@@ -141,8 +163,8 @@ Fill in `DISCORD_TOKEN` and `DEV_GUILD_ID`. Every variable is commented in
 ### 5. Create the database and run
 
 ```bash
-alembic upgrade head
-python -m bot.main
+make migrate
+make run
 ```
 
 Then type `/ping` in your test server. If it answers, you're set up.
@@ -152,13 +174,16 @@ Then type `/ping` in your test server. If it answers, you're set up.
 ## Development
 
 ```bash
-ruff check . && ruff format --check .
-mypy bot/engine bot/db
-pytest
+make check
 ```
 
-All three must pass before a PR merges — CI enforces it. Tests use a fake model
-provider, so `pytest` never makes a real inference call.
+This runs linting, formatting checks, type checks, and the test suite. It must
+pass before a PR merges — CI enforces the same commands. Tests use a fake model
+provider, so `make test` never makes a real inference call.
+
+Run `make` to list every available task. Other useful targets include
+`make migrate`, `make run`, `make cli ARGS="..."`, and `make live` for the
+Ollama conformance test.
 
 Read [`CLAUDE.md`](CLAUDE.md) before contributing (or before pointing a coding
 agent at this repo — `AGENTS.md` symlinks to it). It holds the hard rules,
