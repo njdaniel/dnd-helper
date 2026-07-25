@@ -67,8 +67,22 @@ get skipped in practice and shouldn't be:
 ## Dependencies
 
 Every task issue states its blockers as `Blocked by #N` in the body and carries
-the `blocked` label until they close. When you close an issue, check what it
-unblocked and drop the `blocked` label there.
+the `blocked` label until they close.
+
+**The label maintains itself.** `.github/workflows/unblock.yml` runs
+`scripts/unblock.py` whenever an issue closes or reopens (plus daily, as a
+safety net). It parses every open issue's `## Blocked by` section, removes
+`blocked` once all dependencies are closed, and re-adds it if a dependency is
+reopened. Run it locally any time:
+
+```bash
+python3 scripts/unblock.py --dry-run    # report, change nothing
+python3 scripts/unblock.py              # reconcile
+```
+
+The body text is the source of truth; the label is derived. So when
+dependencies change, **edit the `## Blocked by` section** and let the script
+sort out the label — don't hand-edit labels and expect them to stick.
 
 Most of the graph is a chain. The places where work can genuinely run in
 parallel:
@@ -113,11 +127,34 @@ leaves the next person — or the next agent — with no record of why.
 ## Handing an issue to a coding agent
 
 `AGENTS.md` symlinks to `CLAUDE.md`, so any agent that reads either gets the
-same hard rules. A good handoff is:
+same hard rules.
 
-> Read `CLAUDE.md` and `docs/ARCHITECTURE.md`. Implement issue #N on a branch
-> named `<branch>`. Follow the definition of done. Do not modify files outside
-> the scope of that issue. Do not add dependencies without asking.
+**Don't write the handoff by hand — generate it:**
+
+```bash
+python3 scripts/handoff.py --list     # what's ready right now
+python3 scripts/handoff.py --next     # prompt for the next ready issue
+python3 scripts/handoff.py 6          # prompt for a specific issue
+```
+
+The generated prompt pulls Scope, Acceptance criteria, and Gotchas live from
+the issue, and the definition of done from `CLAUDE.md`. That matters more than
+convenience: a hand-written handoff drifts from the issue, and the agent then
+builds to your memory of the scope rather than the scope. It refuses epics,
+decisions, and `on-hold` issues, and warns loudly if you hand off something
+still labelled `blocked`.
+
+Working directory hygiene when running more than one agent: **give each its own
+git worktree.** Two agents editing the same checkout will clobber each other,
+and the failure is confusing rather than loud.
+
+```bash
+git worktree add ../dnd-1.2 -b phase-1/1.2-speech-layer
+git worktree add ../dnd-1.3 -b phase-1/1.3-npc-commands
+```
+
+Check `docs/ROADMAP.md` for which issues can genuinely run at once — most of
+the graph is a chain, and parallelising a chain just produces merge conflicts.
 
 Rules that exist specifically because agents get them wrong:
 
