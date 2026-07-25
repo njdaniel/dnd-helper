@@ -12,9 +12,10 @@ same rules.
 2. Branch from `main`: `phase-1/1.2-speech-layer` (`<phase>/<task>-<slug>`).
 3. Build it. One issue per branch — resist scope creep into the next issue.
 4. Open a PR with `Closes #N`. CI must be green.
-5. Perform the issue's **manual verification** steps and report the result in a
+5. **Review it** — see below. Agent-written PRs get an independent pass.
+6. Perform the issue's **manual verification** steps and report the result in a
    PR comment. An unverified PR is not done.
-6. Squash-merge. Delete the branch.
+7. Squash-merge. Delete the branch.
 
 At the end of a phase, stop. Run the epic's acceptance gate before starting the
 next phase.
@@ -50,6 +51,55 @@ get skipped in practice and shouldn't be:
 - **`.env.example` updated** if you added config.
 - **A test for what you built.** Not "tests pass" — a new test.
 - **Manual verification actually performed**, with the result written down.
+
+## Review
+
+`main` is protected: CI must be green, the branch must be up to date, history
+stays linear, and conversations must be resolved before merge. Force-pushes and
+deletion are blocked.
+
+**What protection cannot do is tell you the design is wrong.** These rules exist
+because CI passing is a weak signal on agent-written code — every defect found
+so far had a green suite behind it.
+
+**1. The reviewer is not the author.** An agent does not review its own work,
+and neither does the process that wrote the issue. For agent-written PRs, run
+an independent pass before merging:
+
+```bash
+codex review          # in the PR's worktree
+```
+
+That matters more than it sounds. Whoever wrote the issue shares its blind
+spots — code that faithfully implements a wrong spec reads as correct to them.
+
+**2. Run the gate yourself, outside the agent's sandbox.** Agents have
+repeatedly reported "all checks passed" while structurally unable to run the
+test suite — no network for `pip install`, no writable `.git`. Treat an agent's
+green as unverified until you have reproduced it.
+
+**3. Check the acceptance criteria one at a time**, against the issue. Not "do
+the tests pass" — tests pass on code that satisfies none of them.
+
+**4. Look specifically for these**, because they have all actually happened here:
+
+- Work that satisfies the letter of the scope by violating a convention in
+  `CLAUDE.md` — usually because the scope was too narrow
+- A seam left unwired: a provider, cog, or handler written but never registered
+- Config read from the wrong place (`alembic.ini` vs `DATABASE_URL`)
+- Tests that assert on a fixture rather than on real behaviour
+- Dead code shaped like a safety check
+- A weakened test — especially `test_secrets_barrier.py`. **If it fails, the
+  code is wrong.**
+
+**5. `needs-human` PRs do not merge on CI alone.** If the issue says "in a test
+server," someone runs it in a test server first.
+
+**Solo-repo caveat:** GitHub will not let you approve your own pull request, so
+required approvals are not enforced — they would deadlock a one-person repo.
+Review here is a discipline backed by an independent tool pass, not a gate the
+platform imposes. That is a real weakness; know it rather than assume the
+branch rules cover it.
 
 ## Labels
 
