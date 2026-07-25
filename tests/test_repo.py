@@ -153,3 +153,55 @@ async def test_only_one_active_scene_per_channel(
 
     with pytest.raises(IntegrityError):
         await repo.create_scene(db_session, guild.id, channel_id=55)
+
+
+async def test_lore_title_is_unique_within_guild(db_session: AsyncSession) -> None:
+    """Titles address entries in every /lore command, so a duplicate would
+    make one entry permanently unreachable and show two identical
+    autocomplete choices. The database refuses it rather than the lookup
+    silently picking the older row."""
+    guild = await repo.get_or_create_guild(db_session, 700, "Test Guild")
+    await repo.create_lore_entry(
+        db_session,
+        guild.id,
+        title="The Ford",
+        body="First.",
+        category="location",
+        tags=[],
+        visibility="public",
+        source="manual",
+        created_by=1,
+    )
+    with pytest.raises(IntegrityError):
+        await repo.create_lore_entry(
+            db_session,
+            guild.id,
+            title="The Ford",
+            body="Second.",
+            category="location",
+            tags=[],
+            visibility="public",
+            source="manual",
+            created_by=1,
+        )
+
+
+async def test_same_lore_title_allowed_in_a_different_guild(
+    db_session: AsyncSession,
+) -> None:
+    """Uniqueness is per guild — two campaigns may each have 'The Ford'."""
+    first = await repo.get_or_create_guild(db_session, 801, "Campaign A")
+    second = await repo.get_or_create_guild(db_session, 802, "Campaign B")
+    for guild in (first, second):
+        await repo.create_lore_entry(
+            db_session,
+            guild.id,
+            title="The Ford",
+            body="Shared name, separate campaigns.",
+            category="location",
+            tags=[],
+            visibility="public",
+            source="manual",
+            created_by=1,
+        )
+    await db_session.flush()

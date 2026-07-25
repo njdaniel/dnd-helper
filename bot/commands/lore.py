@@ -7,6 +7,7 @@ from collections.abc import Sequence
 import discord
 from discord import app_commands
 from discord.ext import commands
+from sqlalchemy.exc import IntegrityError
 
 from bot.db import repo
 from bot.db.models import Guild, LoreEntry
@@ -156,29 +157,42 @@ class LoreModal(discord.ui.Modal):
             "tags": _parse_tags(str(self.tags)),
             "visibility": visibility,
         }
-        async with self.cog.session_factory.begin() as session:
-            if self.entry_id is None:
-                await repo.create_lore_entry(
-                    session,
-                    guild.id,
-                    **values,
-                    source="manual",
-                    created_by=interaction.user.id,
-                )
-            else:
-                updated = await repo.update_lore_entry(
-                    session,
-                    guild.id,
-                    self.entry_id,
-                    title=values["title"],
-                    body=values["body"],
-                    category=values["category"],
-                    tags=values["tags"],
-                    visibility=values["visibility"],
-                )
-                if updated is None:
-                    await interaction.response.send_message(NOT_FOUND, ephemeral=True)
-                    return
+        try:
+            async with self.cog.session_factory.begin() as session:
+                if self.entry_id is None:
+                    await repo.create_lore_entry(
+                        session,
+                        guild.id,
+                        **values,
+                        source="manual",
+                        created_by=interaction.user.id,
+                    )
+                else:
+                    updated = await repo.update_lore_entry(
+                        session,
+                        guild.id,
+                        self.entry_id,
+                        title=values["title"],
+                        body=values["body"],
+                        category=values["category"],
+                        tags=values["tags"],
+                        visibility=values["visibility"],
+                    )
+                    if updated is None:
+                        await interaction.response.send_message(
+                            NOT_FOUND, ephemeral=True
+                        )
+                        return
+        except IntegrityError:
+            # A title is how every /lore command addresses an entry, so the
+            # duplicate has to be refused rather than accepted and shadowed.
+            await interaction.response.send_message(
+                f"A lore entry titled **{values['title']}** already exists in "
+                "this campaign. Pick a different title, or edit the existing "
+                "entry instead.",
+                ephemeral=True,
+            )
+            return
         action = "updated" if self.entry_id is not None else "added"
         await interaction.response.send_message(
             f"Lore entry **{values['title']}** {action}.", ephemeral=True

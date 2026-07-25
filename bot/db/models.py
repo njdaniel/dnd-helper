@@ -95,7 +95,13 @@ class Persona(UpdatedAtMixin, Base):
 
 class LoreEntry(UpdatedAtMixin, Base):
     __tablename__ = "lore_entry"
-    __table_args__ = (Index("ix_lore_entry_guild_category", "guild_id", "category"),)
+    __table_args__ = (
+        Index("ix_lore_entry_guild_category", "guild_id", "category"),
+        # The title is how every /lore command addresses an entry, so a
+        # duplicate makes one of them permanently unreachable and shows two
+        # identical autocomplete choices. Same reasoning as persona.name.
+        UniqueConstraint("guild_id", "title", name="uq_lore_entry_guild_title"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     guild_id: Mapped[int] = mapped_column(ForeignKey("guild.id"))
