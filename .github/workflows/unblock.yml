@@ -1,0 +1,30 @@
+name: Unblock
+
+on:
+  issues:
+    types: [closed, reopened]
+  workflow_dispatch: {}
+  schedule:
+    # Safety net in case an `issues` event is missed or a body edit changes
+    # the dependency graph without a state change firing this workflow.
+    - cron: "17 6 * * *"
+
+permissions:
+  issues: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  unblock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconcile the blocked label
+        run: python3 scripts/unblock.py
