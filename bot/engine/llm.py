@@ -96,6 +96,7 @@ class LLMEngine:
             tier=tier,
             input_tokens=result.input_tokens,
             cache_read_tokens=result.cache_read_tokens,
+            cache_creation_tokens=result.cache_creation_tokens,
             output_tokens=result.output_tokens,
             latency_ms=latency_ms,
             purpose=purpose,

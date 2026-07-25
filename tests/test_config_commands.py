@@ -207,6 +207,7 @@ async def test_usage_estimates_anthropic_spend(
                 tier="dialogue",
                 input_tokens=1_000_000,
                 cache_read_tokens=1_000_000,
+                cache_creation_tokens=1_000_000,
                 output_tokens=1_000_000,
                 latency_ms=100,
                 purpose="dialogue",
@@ -222,4 +223,89 @@ async def test_usage_estimates_anthropic_spend(
     )
 
     message = interaction.response.send_message.await_args.args[0]
-    assert "Estimated Anthropic spend** — $12.2000" in message
+    # claude-sonnet-5 at $3/$15 per Mtok, one million tokens of each kind:
+    #   input        1.00 x 3.00  =  3.00
+    #   cache read   1.00 x 0.30  =  0.30   (10% of input)
+    #   cache write  1.00 x 3.75  =  3.75   (125% of input)
+    #   output       1.00 x 15.00 = 15.00
+    #                              = 22.05
+    assert "Estimated Anthropic spend** — $22.0500" in message
+
+
+async def test_usage_prices_by_model_not_tier(
+    session_factory: SessionFactory,
+) -> None:
+    """Tiers are configurable, so pricing must follow the recorded model.
+
+    Pointing ANTHROPIC_MODEL_DIALOGUE at Opus and billing it at Sonnet rates
+    understates spend by 67% on every dialogue call.
+    """
+    async with session_factory.begin() as session:
+        guild = Guild(discord_guild_id=123, name="Test Guild")
+        session.add(guild)
+        await session.flush()
+        session.add(
+            UsageLog(
+                guild_id=guild.id,
+                provider="anthropic",
+                model="claude-opus-5",  # an Opus model on the dialogue tier
+                tier="dialogue",
+                input_tokens=1_000_000,
+                cache_read_tokens=0,
+                cache_creation_tokens=0,
+                output_tokens=0,
+                latency_ms=100,
+                purpose="dialogue",
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+
+    interaction = _interaction()
+    await _invoke(
+        ConfigCog.usage,
+        ConfigCog(session_factory, _settings("anthropic")),
+        interaction,
+    )
+
+    message = interaction.response.send_message.await_args.args[0]
+    # Opus 5 input is $5/Mtok. Pricing by tier would have charged Sonnet's $3.
+    assert "Estimated Anthropic spend** — $5.0000" in message
+
+
+async def test_usage_shows_past_spend_after_switching_to_local(
+    session_factory: SessionFactory,
+) -> None:
+    """Money already spent must not vanish when the provider changes.
+
+    The rows stay in usage_log; gating the report on the *current* provider
+    hid real spend the moment you flipped LLM_PROVIDER for a comparison.
+    """
+    async with session_factory.begin() as session:
+        guild = Guild(discord_guild_id=123, name="Test Guild")
+        session.add(guild)
+        await session.flush()
+        session.add(
+            UsageLog(
+                guild_id=guild.id,
+                provider="anthropic",
+                model="claude-sonnet-5",
+                tier="dialogue",
+                input_tokens=1_000_000,
+                cache_read_tokens=0,
+                cache_creation_tokens=0,
+                output_tokens=0,
+                latency_ms=100,
+                purpose="dialogue",
+                created_at=datetime.now(UTC).replace(tzinfo=None),
+            )
+        )
+
+    interaction = _interaction()
+    await _invoke(
+        ConfigCog.usage,
+        ConfigCog(session_factory, _settings("ollama")),  # switched to local
+        interaction,
+    )
+
+    message = interaction.response.send_message.await_args.args[0]
+    assert "Estimated Anthropic spend** — $3.0000" in message

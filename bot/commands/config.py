@@ -14,13 +14,21 @@ from bot.config import Settings
 from bot.db.models import Guild, UsageLog
 from bot.db.session import SessionFactory
 
-# USD per million tokens for the models assigned to each Anthropic tier.
-# Cache reads are billed at 10% of the base input rate.
+# USD per million tokens, keyed by the model actually recorded on the usage
+# row. Keying by tier would misprice any deployment that points a tier at a
+# different model — which the ANTHROPIC_MODEL_* settings explicitly allow.
 _ANTHROPIC_PRICES = {
-    "dialogue": (2.0, 10.0),
-    "utility": (1.0, 5.0),
-    "epic": (5.0, 25.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-sonnet-5": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-fable-5": (10.0, 50.0),
 }
+
+# Cache reads cost ~10% of the base input rate; cache writes ~1.25x. Omitting
+# writes understates spend on exactly the requests prompt caching optimises.
+_CACHE_READ_MULTIPLIER = 0.1
+_CACHE_WRITE_MULTIPLIER = 1.25
 
 
 @dataclass(frozen=True)
@@ -29,25 +37,38 @@ class UsageSummary:
 
     provider: str
     tier: str | None
+    model: str
     calls: int
     input_tokens: int
     cache_read_tokens: int
+    cache_creation_tokens: int
     output_tokens: int
     mean_latency_ms: float
 
     @property
     def total_tokens(self) -> int:
-        return self.input_tokens + self.cache_read_tokens + self.output_tokens
+        return (
+            self.input_tokens
+            + self.cache_read_tokens
+            + self.cache_creation_tokens
+            + self.output_tokens
+        )
+
+    @property
+    def is_priced(self) -> bool:
+        """Whether a spend figure can be produced for this row at all."""
+        return self.provider == "anthropic" and self.model in _ANTHROPIC_PRICES
 
     @property
     def estimated_spend(self) -> float:
-        prices = _ANTHROPIC_PRICES.get(self.tier or "")
+        prices = _ANTHROPIC_PRICES.get(self.model)
         if self.provider != "anthropic" or prices is None:
             return 0.0
         input_price, output_price = prices
         return (
             self.input_tokens * input_price
-            + self.cache_read_tokens * input_price * 0.1
+            + self.cache_read_tokens * input_price * _CACHE_READ_MULTIPLIER
+            + self.cache_creation_tokens * input_price * _CACHE_WRITE_MULTIPLIER
             + self.output_tokens * output_price
         ) / 1_000_000
 
@@ -169,9 +190,11 @@ class ConfigCog(commands.Cog):
                     select(
                         UsageLog.provider,
                         UsageLog.tier,
+                        UsageLog.model,
                         func.count(UsageLog.id),
                         func.sum(UsageLog.input_tokens),
                         func.sum(UsageLog.cache_read_tokens),
+                        func.sum(UsageLog.cache_creation_tokens),
                         func.sum(UsageLog.output_tokens),
                         func.avg(UsageLog.latency_ms),
                     )
@@ -179,19 +202,21 @@ class ConfigCog(commands.Cog):
                         UsageLog.guild_id == guild.id,
                         UsageLog.created_at >= month_start,
                     )
-                    .group_by(UsageLog.provider, UsageLog.tier)
-                    .order_by(UsageLog.provider, UsageLog.tier)
+                    .group_by(UsageLog.provider, UsageLog.tier, UsageLog.model)
+                    .order_by(UsageLog.provider, UsageLog.tier, UsageLog.model)
                 )
             ).all()
             summaries = [
                 UsageSummary(
                     provider=row[0],
                     tier=row[1],
-                    calls=row[2],
-                    input_tokens=row[3] or 0,
-                    cache_read_tokens=row[4] or 0,
-                    output_tokens=row[5] or 0,
-                    mean_latency_ms=row[6] or 0.0,
+                    model=row[2],
+                    calls=row[3],
+                    input_tokens=row[4] or 0,
+                    cache_read_tokens=row[5] or 0,
+                    cache_creation_tokens=row[6] or 0,
+                    output_tokens=row[7] or 0,
+                    mean_latency_ms=row[8] or 0.0,
                 )
                 for row in rows
             ]
@@ -239,9 +264,22 @@ class ConfigCog(commands.Cog):
                 ),
             ]
         )
-        if self._settings.llm_provider == "anthropic":
+        # Driven by the rows returned, not the currently selected provider:
+        # switching to Ollama must not hide money already spent this month.
+        if any(summary.is_priced for summary in summaries):
             spend = sum(summary.estimated_spend for summary in summaries)
             lines.append(f"**Estimated Anthropic spend** — ${spend:,.4f}")
+        unpriced = {
+            summary.model
+            for summary in summaries
+            if summary.provider == "anthropic" and not summary.is_priced
+        }
+        if unpriced:
+            lines.append(
+                "**Unpriced models** — "
+                + ", ".join(sorted(unpriced))
+                + " (no rate on file; spend above excludes them)"
+            )
 
         await interaction.response.send_message("\n".join(lines), ephemeral=True)
 

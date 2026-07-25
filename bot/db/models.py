@@ -196,6 +196,9 @@ class UsageLog(TimestampMixin, Base):
     cache_read_tokens: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")
     )
+    cache_creation_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
     output_tokens: Mapped[int] = mapped_column(Integer)
     latency_ms: Mapped[int] = mapped_column(Integer)
     purpose: Mapped[str] = mapped_column(String(50))

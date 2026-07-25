@@ -17,6 +17,17 @@ def upgrade() -> None:
         sa.Column("tier", sa.String(length=50), nullable=True),
     )
 
+    op.add_column(
+        "usage_log",
+        sa.Column(
+            "cache_creation_tokens",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
+    )
+
 
 def downgrade() -> None:
+    op.drop_column("usage_log", "cache_creation_tokens")
     op.drop_column("usage_log", "tier")
