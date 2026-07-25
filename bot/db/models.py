@@ -191,6 +191,7 @@ class UsageLog(TimestampMixin, Base):
     guild_id: Mapped[int] = mapped_column(ForeignKey("guild.id"))
     provider: Mapped[str] = mapped_column(String(50))
     model: Mapped[str] = mapped_column(String(255))
+    tier: Mapped[str | None] = mapped_column(String(50))
     input_tokens: Mapped[int] = mapped_column(Integer)
     cache_read_tokens: Mapped[int] = mapped_column(
         Integer, default=0, server_default=text("0")

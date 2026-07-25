@@ -93,6 +93,7 @@ class LLMEngine:
             self._guild_id,
             provider=self._provider.name,
             model=model,
+            tier=tier,
             input_tokens=result.input_tokens,
             cache_read_tokens=result.cache_read_tokens,
             output_tokens=result.output_tokens,
