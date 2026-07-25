@@ -46,4 +46,7 @@ strict = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "live: hits a real local model; deselected by default. Run with OLLAMA_LIVE_TEST=1 pytest -m live",
+]
 
