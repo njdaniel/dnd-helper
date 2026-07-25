@@ -1,0 +1,50 @@
+name: Bug
+description: Something behaves wrong at the table
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the actual Discord message or log line if you have it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Model provider
+      options:
+        - ollama (local)
+        - anthropic
+        - not model-related / unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Model and version, Python version, OS. Never paste a token or API key.
+      placeholder: |
+        model: qwen3.6:27b
+        python: 3.12.3
+        os: Pop!_OS 22.04

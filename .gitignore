@@ -1,0 +1,46 @@
+# ── Secrets ────────────────────────────────────────────────
+# Never commit real tokens. This repo is public.
+.env
+.env.*
+!.env.example
+
+# ── Local database ─────────────────────────────────────────
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# ── Python ─────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# ── Tooling caches ─────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# ── Editors / OS ───────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ── Runtime artifacts ──────────────────────────────────────
+logs/
+*.log

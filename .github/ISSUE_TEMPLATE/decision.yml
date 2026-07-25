@@ -1,0 +1,40 @@
+name: Decision
+description: An architectural choice worth recording before building
+title: "[decision] "
+labels: ["type:docs"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: What forces are in play? What made this come up now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options
+      description: At least two, each with what it costs. If there's only one option, this isn't a decision.
+      value: |
+        **A.**
+        - cost:
+
+        **B.**
+        - cost:
+    validations:
+      required: true
+
+  - type: textarea
+    id: reversibility
+    attributes:
+      label: Reversibility
+      description: How expensive is it to undo later? Cheap-to-reverse decisions should be made fast and moved on from.
+    validations:
+      required: true
+
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommendation
+      description: Pick one and say why. Closing this issue means writing the ADR into docs/DECISIONS.md.

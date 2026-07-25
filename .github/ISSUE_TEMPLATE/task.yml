@@ -1,0 +1,57 @@
+name: Task
+description: A unit of work from the roadmap
+title: "[x.y] "
+labels: ["type:feat"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One or two sentences. What exists after this that didn't before?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: Files and modules this should touch. Anything outside is out of scope.
+      placeholder: |
+        - `bot/engine/speech.py` (new)
+        - `tests/test_speech.py` (new)
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checkable statements. An agent should be able to self-assess against these.
+      value: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Manual verification
+      description: Steps a human performs in a real Discord server. Write "none" if fully automatable.
+    validations:
+      required: true
+
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+      description: Issue numbers that must close first. Write "none" if unblocked.
+      placeholder: "#3, #4"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Gotchas
+      description: Known traps — library quirks, ordering constraints, things that look right and aren't.

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      # Phase 0.1 creates pyproject.toml. Until then there is nothing to
+      # install or check, so skip rather than fail the whole matrix red.
+      - name: Check for pyproject.toml
+        id: has_project
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No pyproject.toml yet — skipping until issue 0.1 lands."
+          fi
+
+      - name: Install
+        if: steps.has_project.outputs.found == 'true'
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        if: steps.has_project.outputs.found == 'true'
+        run: ruff check .
+
+      - name: Format (ruff)
+        if: steps.has_project.outputs.found == 'true'
+        run: ruff format --check .
+
+      - name: Types (mypy)
+        if: steps.has_project.outputs.found == 'true'
+        run: mypy bot/engine bot/db
+
+      - name: Tests (pytest)
+        if: steps.has_project.outputs.found == 'true'
+        # Tests use a fake provider — no real inference calls, no API key.
+        run: pytest -q
+
+  secrets:
+    name: no secrets in diff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # This repo is public. A committed token is a real incident, so fail
+      # loudly on the obvious shapes rather than trusting review to catch it.
+      - name: Scan for committed credentials
+        run: |
+          set -euo pipefail
+          patterns='(MT[A-Za-z0-9._-]{50,}|sk-ant-[A-Za-z0-9._-]{20,}|gh[pousr]_[A-Za-z0-9]{30,})'
+          if git grep -nIE "$patterns" -- ':!.github/workflows/ci.yml'; then
+            echo "::error::Possible credential committed. Rotate it immediately, then remove it from the diff."
+            exit 1
+          fi
+          if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+            echo "::error::.env is tracked by git. It must stay ignored."
+            exit 1
+          fi
+          echo "No credential patterns found."
