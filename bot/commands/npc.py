@@ -55,19 +55,35 @@ def may_view_secrets(
     return user_id == owner_id or (dm_role_id is not None and dm_role_id in role_ids)
 
 
+# Discord rejects an embed whose field value exceeds this. A modal paragraph
+# input allows 4,000 characters by default, so without capping both ends an
+# over-long persona commits to the database and *then* fails to render — the
+# NPC exists, but the user sees an error.
+EMBED_FIELD_LIMIT = 1024
+
+
+def _field(value: str) -> str:
+    """Fit a persona field into an embed without losing the response."""
+    if len(value) <= EMBED_FIELD_LIMIT:
+        return value
+    return value[: EMBED_FIELD_LIMIT - 1] + "\u2026"
+
+
 def persona_embed(persona: Persona, *, include_secrets: bool) -> discord.Embed:
     """Render a persona without accidentally exposing its secrets."""
-    embed = discord.Embed(title=persona.name, description=persona.public_desc)
+    embed = discord.Embed(title=persona.name, description=_field(persona.public_desc))
     embed.add_field(name="Status", value=persona.status, inline=True)
     embed.add_field(
         name="Tags",
         value=", ".join(persona.knowledge_tags) or "None",
         inline=True,
     )
-    embed.add_field(name="Personality", value=persona.personality, inline=False)
-    embed.add_field(name="Goals", value=persona.goals, inline=False)
+    embed.add_field(name="Personality", value=_field(persona.personality), inline=False)
+    embed.add_field(name="Goals", value=_field(persona.goals), inline=False)
     if include_secrets:
-        embed.add_field(name="Secrets", value=persona.secrets or "None", inline=False)
+        embed.add_field(
+            name="Secrets", value=_field(persona.secrets or "None"), inline=False
+        )
     if persona.avatar_url:
         embed.set_thumbnail(url=persona.avatar_url)
     return embed
@@ -188,17 +204,22 @@ class CreateNpcModal(discord.ui.Modal, title="Create NPC"):
         label="Name", max_length=255
     )
     public_desc: discord.ui.TextInput[CreateNpcModal] = discord.ui.TextInput(
-        label="Public description", style=discord.TextStyle.paragraph
+        label="Public description",
+        style=discord.TextStyle.paragraph,
+        max_length=EMBED_FIELD_LIMIT,
     )
     personality: discord.ui.TextInput[CreateNpcModal] = discord.ui.TextInput(
-        label="Personality", style=discord.TextStyle.paragraph
+        label="Personality",
+        style=discord.TextStyle.paragraph,
+        max_length=EMBED_FIELD_LIMIT,
     )
     goals: discord.ui.TextInput[CreateNpcModal] = discord.ui.TextInput(
-        label="Goals", style=discord.TextStyle.paragraph
+        label="Goals", style=discord.TextStyle.paragraph, max_length=EMBED_FIELD_LIMIT
     )
     secrets: discord.ui.TextInput[CreateNpcModal] = discord.ui.TextInput(
         label="Secrets",
         style=discord.TextStyle.paragraph,
+        max_length=EMBED_FIELD_LIMIT,
         required=False,
     )
 
@@ -333,8 +354,20 @@ class Npc(commands.GroupCog, group_name="npc"):
                 "No NPCs have been created yet.", ephemeral=True
             )
             return
-        lines = [f"• **{persona.name}** — {persona.status}" for persona in personas]
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        # A name may be 255 characters, so a busy campaign can exceed Discord's
+        # 2,000-character content limit and the command fails outright. An
+        # embed description allows 4,096; beyond that, say what was omitted
+        # rather than sending nothing.
+        lines: list[str] = []
+        for persona in personas:
+            line = f"• **{persona.name}** — {persona.status}"
+            if sum(len(existing) + 1 for existing in lines) + len(line) > 3900:
+                remaining = len(personas) - len(lines)
+                lines.append(f"*…and {remaining} more. Use `/npc view <name>`.*")
+                break
+            lines.append(line)
+        embed = discord.Embed(title="NPCs", description="\n".join(lines))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="view", description="View an NPC.")
     @app_commands.describe(name="NPC name")

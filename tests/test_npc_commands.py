@@ -111,3 +111,48 @@ async def test_persona_embed_hides_secrets(
     assert "SENTINEL SECRET" not in str(public_embed.to_dict())
     assert "SENTINEL SECRET" in str(dm_embed.to_dict())
     assert isinstance(public_embed, discord.Embed)
+
+
+def test_persona_fields_fit_discord_embed_limits() -> None:
+    """An over-long field made creation commit and then fail to render.
+
+    Modal paragraph inputs allow 4,000 characters; embed field values cap at
+    1,024. Without capping both ends the NPC exists in the database while the
+    user sees an error — the worst of both outcomes.
+    """
+    from bot.commands.npc import EMBED_FIELD_LIMIT, persona_embed
+    from bot.db.models import Persona
+
+    persona = Persona(
+        guild_id=1,
+        name="Verbose Vera",
+        public_desc="x" * 5000,
+        personality="y" * 5000,
+        goals="z" * 5000,
+        secrets="s" * 5000,
+        knowledge_tags=[],
+        status="active",
+        created_by=1,
+    )
+    embed = persona_embed(persona, include_secrets=True)
+    for field in embed.fields:
+        assert len(field.value or "") <= EMBED_FIELD_LIMIT, field.name
+    assert len(embed.description or "") <= EMBED_FIELD_LIMIT
+
+
+def test_modal_inputs_cannot_exceed_what_an_embed_can_render() -> None:
+    """Cap at the source too, so the truncation above is a safety net rather
+    than the mechanism — a user should not silently lose text they typed."""
+    import discord
+
+    from bot.commands.npc import EMBED_FIELD_LIMIT, CreateNpcModal
+
+    paragraphs = [
+        item
+        for item in CreateNpcModal.__dict__.values()
+        if isinstance(item, discord.ui.TextInput)
+        and item.style is discord.TextStyle.paragraph
+    ]
+    assert paragraphs, "no paragraph inputs found"
+    for item in paragraphs:
+        assert item.max_length == EMBED_FIELD_LIMIT, item.label
