@@ -72,6 +72,31 @@ cd dnd-helper
 make install
 ```
 
+Run `make` on its own to see every target.
+
+<details>
+<summary><b>No <code>make</code>?</b> (native Windows, or a minimal container)</summary>
+
+`make` is not installed by default on Windows. Either use WSL, or run the
+commands directly — every target is a one-liner:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+
+alembic upgrade head               # make migrate
+python -m bot.main                 # make run
+pytest                             # make test
+ruff check . && ruff format --check . && mypy bot/engine bot/db && pytest
+                                   # make check
+```
+
+`make check` is the one worth remembering: it is exactly the definition of done
+in [`CLAUDE.md`](CLAUDE.md), and the same four commands CI runs.
+
+</details>
+
 ### 2. Create the Discord application
 
 1. Go to the [Developer Portal](https://discord.com/developers/applications) →
