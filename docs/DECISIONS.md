@@ -53,6 +53,47 @@ irreversible one at exactly the moment we have the least information.
 
 ---
 
+## ADR-0004 — All persistent state in SQLite, including authored content
+
+**Status:** accepted · 2026-07-25 · closes #33
+
+**Context.** The data divides into two kinds that pull toward different
+storage. *Authored content* — personas and lore — is human-written, low-volume,
+and changes when a person decides it changes. *Runtime state* —
+`scene_message`, `scene`, `scene_persona`, `usage_log` — is machine-written,
+high-volume, concurrent, and queried by index.
+
+A hybrid was considered and recommended: markdown files with YAML frontmatter
+for authored content, SQLite for runtime state. That would put the campaign
+bible in git, make it editable in Obsidian, and let existing campaign material
+be dropped into a folder rather than imported.
+
+**Decision.** Everything goes in SQLite. One storage layer, one set of
+patterns.
+
+**Consequences.**
+
+- One thing to learn, back up, and reason about. `repo.py` is the only data
+  access path, and hard rule #2 (`guild_id` on every query) is enforced in one
+  place rather than two.
+- Schema changes cost an Alembic migration. Adding a field to a persona is no
+  longer editing a file — this is the friction we accepted.
+- The campaign bible is only readable through the bot. No git history on lore,
+  no diffing a persona's goals across sessions, no editing in a text editor.
+- **`/lore export` (#27) becomes load-bearing rather than a nice-to-have.** It
+  is the escape hatch: the thing that gets a campaign back out if this decision
+  is reversed, or if the bot is abandoned. Treat it as required, not polish.
+- Portraits and images are the one exception, and not by choice — Discord
+  webhooks fetch avatars by URL, so image *bytes* live outside the database
+  regardless. The schema stores URLs. See #35.
+
+**Revisit when.** Editing lore through five-field Discord modals becomes
+friction worth a day of work, or you want the campaign in git. Reversal means
+rewriting `repo.py` and the commands that touch it, so the trigger should be
+real annoyance rather than aesthetics.
+
+---
+
 ## ADR-0002 — One bot account, many NPCs, via channel webhooks
 
 **Status:** accepted · 2026-07-25

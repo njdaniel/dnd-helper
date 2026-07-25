@@ -119,6 +119,7 @@ lore_entry
   category ('location'|'faction'|'person'|'event'|'item'|'rule'|'other'),
   tags (json), visibility ('public'|'dm_only', default 'public'),
   source ('manual'|'extracted'|'recap', default 'manual'),
+  image_url (nullable)      -- location art, maps, handouts. See #35.
   created_by, created_at, updated_at
   INDEX(guild_id, category)
 
@@ -127,6 +128,7 @@ scene
   status ('active'|'paused'|'ended', default 'active'),
   mode ('standard'|'epic', default 'standard'),
   location_lore_id (fk nullable), summary (text, default ''),
+  image_url (nullable)      -- establishing shot for the scene embed
   created_at, updated_at
   UNIQUE(channel_id) WHERE status='active'   -- one live scene per channel
 
@@ -147,6 +149,22 @@ usage_log
 character_sheet
   id (pk), guild_id (fk), owner_user_id, name, data_json, created_at, updated_at
 ```
+
+### Images
+
+The database stores **URLs, not bytes**, and that is a constraint rather than a
+preference: Discord webhooks take `avatar_url` as a URL their servers fetch, and
+there is no way to pass raw image data for a per-message avatar override. A
+portrait on local disk cannot be used as an NPC's face.
+
+Three columns carry images — `persona.avatar_url`, `lore_entry.image_url`,
+`scene.image_url` — and all three need a publicly reachable host. Where that
+host is remains open (#35), and is entangled with where the bot ends up running
+(#34): a bot on a VPS can serve its own images; a bot on a desktop cannot,
+without a tunnel.
+
+Until #35 is settled, any publicly-fetchable URL works. Nothing in the schema
+changes when the answer arrives.
 
 ---
 
