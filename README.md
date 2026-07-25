@@ -69,11 +69,33 @@ will run on less with a smaller model; NPC quality is the thing you trade away.
 git clone https://github.com/njdaniel/dnd-helper.git
 cd dnd-helper
 
+make install
+```
+
+Run `make` on its own to see every target.
+
+<details>
+<summary><b>No <code>make</code>?</b> (native Windows, or a minimal container)</summary>
+
+`make` is not installed by default on Windows. Either use WSL, or run the
+commands directly — every target is a one-liner:
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
 pip install -e ".[dev]"
+
+alembic upgrade head               # make migrate
+python -m bot.main                 # make run
+pytest                             # make test
+ruff check . && ruff format --check . && mypy bot/engine bot/db && pytest
+                                   # make check
 ```
+
+`make check` is the one worth remembering: it is exactly the definition of done
+in [`CLAUDE.md`](CLAUDE.md), and the same four commands CI runs.
+
+</details>
 
 ### 2. Create the Discord application
 
@@ -101,14 +123,33 @@ every NPC speaks as the bot instead of as itself.
 **Local (default):**
 
 ```bash
-ollama pull qwen3.6:27b     # or a Hermes-family model
-ollama list                 # confirm it's there
+ollama pull qwen3.6:27b
+python scripts/preflight.py
 ```
+
+`qwen3.6:27b` is the known-good local model: it passed the structured-output
+conformance test 10/10. Its quantized weights leave enough room for a useful
+context window on a 24 GB GPU; treat **24 GB VRAM as the practical
+requirement**. Quantization and context length change actual memory use, so
+smaller GPUs require a smaller model and a fresh conformance run.
+
+On the project's RTX 4090 (24 GB), `qwen3.6:27b` takes **16–36 seconds to
+return a reply**. That is workable for prompt tuning and noticeable during a
+live session. Keep `OLLAMA_KEEP_ALIVE` enabled to avoid adding model-load time
+to the first line of each scene.
+
+The preflight command does not start the bot or require a Discord token. It
+checks the selected provider, prints the tier-to-model mapping, confirms that
+Ollama is reachable and each configured model is installed, and reports free
+NVIDIA VRAM when `nvidia-smi` is available. Every failed check includes the
+command or environment change needed to fix it, and any failure exits non-zero.
 
 **Hosted (optional baseline):** create a key at
 [console.anthropic.com](https://console.anthropic.com) → API Keys — and **set a
 monthly spend limit** under Settings → Limits while you're there. Then set
-`LLM_PROVIDER=anthropic` in your `.env`.
+`LLM_PROVIDER=anthropic` in your `.env`. In this mode
+`python scripts/preflight.py` checks that `ANTHROPIC_API_KEY` is present and
+skips local Ollama checks; it does not make a metered request.
 
 ### 4. Configure
 
@@ -122,8 +163,8 @@ Fill in `DISCORD_TOKEN` and `DEV_GUILD_ID`. Every variable is commented in
 ### 5. Create the database and run
 
 ```bash
-alembic upgrade head
-python -m bot.main
+make migrate
+make run
 ```
 
 Then type `/ping` in your test server. If it answers, you're set up.
@@ -133,13 +174,16 @@ Then type `/ping` in your test server. If it answers, you're set up.
 ## Development
 
 ```bash
-ruff check . && ruff format --check .
-mypy bot/engine bot/db
-pytest
+make check
 ```
 
-All three must pass before a PR merges — CI enforces it. Tests use a fake model
-provider, so `pytest` never makes a real inference call.
+This runs linting, formatting checks, type checks, and the test suite. It must
+pass before a PR merges — CI enforces the same commands. Tests use a fake model
+provider, so `make test` never makes a real inference call.
+
+Run `make` to list every available task. Other useful targets include
+`make migrate`, `make run`, `make cli ARGS="..."`, and `make live` for the
+Ollama conformance test.
 
 Read [`CLAUDE.md`](CLAUDE.md) before contributing (or before pointing a coding
 agent at this repo — `AGENTS.md` symlinks to it). It holds the hard rules,
