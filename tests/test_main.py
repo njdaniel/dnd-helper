@@ -49,3 +49,32 @@ def test_token_is_not_exposed_by_repr(settings: Settings) -> None:
     or a traceback rendering it — must not leak the token."""
     assert "not-a-real-token" not in repr(settings)
     assert "not-a-real-token" not in str(settings.discord_token)
+
+
+def test_log_formatter_preserves_structured_fields() -> None:
+    """A plain format string drops `extra` silently. Three call sites in
+    main.py attach operational context that way, and CLAUDE.md requires JSON
+    logging — so losing it is both a lost diagnostic and a convention breach."""
+    import io
+    import json
+    import logging
+
+    from bot.main import JsonFormatter
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter())
+    logger = logging.getLogger("test_json_formatter")
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+    logger.info("Slash commands synced", extra={"command_count": 7, "guild": "123"})
+
+    payload = json.loads(stream.getvalue())
+    assert payload["command_count"] == 7
+    assert payload["guild"] == "123"
+    assert payload["message"] == "Slash commands synced"
+    assert payload["level"] == "INFO"
+    # LogRecord internals must not leak into the log line.
+    assert not {"args", "msg", "levelno", "pathname"} & set(payload)

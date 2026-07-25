@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import pkgutil
 import signal
@@ -65,11 +66,41 @@ class DndHelperBot(commands.Bot):
             LOGGER.info("Command cog loaded", extra={"extension": module})
 
 
+_RESERVED_LOG_FIELDS = frozenset(
+    set(vars(logging.LogRecord("", 0, "", 0, "", None, None)))
+    | {"taskName", "message", "asctime"}
+)
+
+
+class JsonFormatter(logging.Formatter):
+    """Render records as one JSON object per line, keeping `extra` fields.
+
+    A plain format string drops everything passed through `extra` without
+    warning, so context like the synced command count or the shutdown signal
+    would be logged as if it had never been attached.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, object] = {
+            "time": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        # Anything the caller attached via extra= lands in __dict__ alongside
+        # LogRecord's own attributes; the difference is what identifies it.
+        for key, value in record.__dict__.items():
+            if key not in _RESERVED_LOG_FIELDS and not key.startswith("_"):
+                payload[key] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
 def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(JsonFormatter())
+    logging.basicConfig(level=level, handlers=[handler], force=True)
 
 
 def _install_signal_handlers(
