@@ -30,6 +30,11 @@ _ANTHROPIC_PRICES = {
 _CACHE_READ_MULTIPLIER = 0.1
 _CACHE_WRITE_MULTIPLIER = 1.25
 
+# Discord caps message content at 2,000 characters and an embed
+# description at 4,096. A usage row is roughly 100 characters, so this
+# leaves generous headroom for the totals that follow.
+_MAX_USAGE_ROWS = 20
+
 
 @dataclass(frozen=True)
 class UsageSummary:
@@ -231,14 +236,27 @@ class ConfigCog(commands.Cog):
             )
             budget = guild.daily_reply_budget
 
+        # Grouping by model (rather than tier) makes the row count unbounded:
+        # every model ever configured this month gets its own line. Show the
+        # busiest and say how many were dropped, so a long history degrades
+        # into a shorter report instead of a message Discord refuses to send.
+        ranked = sorted(summaries, key=lambda s: s.calls, reverse=True)
+        shown, hidden = ranked[:_MAX_USAGE_ROWS], ranked[_MAX_USAGE_ROWS:]
         lines = [
             (
-                f"**{summary.provider} / {summary.tier or 'unknown'}** — "
+                f"**{summary.provider} / {summary.tier or 'unknown'} / "
+                f"{summary.model}** — "
                 f"{summary.calls:,} calls, {summary.total_tokens:,} tokens, "
                 f"{summary.mean_latency_ms:,.0f} ms mean latency"
             )
-            for summary in summaries
+            for summary in shown
         ]
+        if hidden:
+            lines.append(
+                f"*…and {len(hidden)} more combination(s), "
+                f"{sum(s.calls for s in hidden):,} calls — included in the "
+                "totals below.*"
+            )
         if not lines:
             lines.append("No model calls recorded this month.")
 
@@ -281,7 +299,8 @@ class ConfigCog(commands.Cog):
                 + " (no rate on file; spend above excludes them)"
             )
 
-        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+        embed = discord.Embed(title="Usage this month", description="\n".join(lines))
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

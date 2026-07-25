@@ -60,6 +60,20 @@ async def _invoke(command, cog: ConfigCog, *args, **kwargs) -> None:
     await command.callback(cog, *args, **kwargs)
 
 
+def _sent_text(interaction) -> str:
+    """The text a command actually produced, however it was sent.
+
+    /usage moved from a content string to an embed once the report became
+    long enough to risk Discord's 2,000-character limit; these assertions are
+    about what the user reads, not which field carried it.
+    """
+    call = interaction.response.send_message.await_args
+    embed = call.kwargs.get("embed")
+    if embed is not None:
+        return f"{embed.title or ''}\n{embed.description or ''}"
+    return call.args[0] if call.args else call.kwargs.get("content", "")
+
+
 async def test_config_sets_all_supported_values(
     session_factory: SessionFactory,
 ) -> None:
@@ -183,7 +197,7 @@ async def test_usage_reports_monthly_provider_tier_totals_and_budget(
         interaction,
     )
 
-    message = interaction.response.send_message.await_args.args[0]
+    message = _sent_text(interaction)
     assert "ollama / dialogue" in message
     assert "2 calls, 400 tokens, 2,000 ms mean latency" in message
     assert "ollama / utility" in message
@@ -222,7 +236,7 @@ async def test_usage_estimates_anthropic_spend(
         interaction,
     )
 
-    message = interaction.response.send_message.await_args.args[0]
+    message = _sent_text(interaction)
     # claude-sonnet-5 at $3/$15 per Mtok, one million tokens of each kind:
     #   input        1.00 x 3.00  =  3.00
     #   cache read   1.00 x 0.30  =  0.30   (10% of input)
@@ -267,7 +281,7 @@ async def test_usage_prices_by_model_not_tier(
         interaction,
     )
 
-    message = interaction.response.send_message.await_args.args[0]
+    message = _sent_text(interaction)
     # Opus 5 input is $5/Mtok. Pricing by tier would have charged Sonnet's $3.
     assert "Estimated Anthropic spend** — $5.0000" in message
 
@@ -307,5 +321,50 @@ async def test_usage_shows_past_spend_after_switching_to_local(
         interaction,
     )
 
-    message = interaction.response.send_message.await_args.args[0]
+    message = _sent_text(interaction)
     assert "Estimated Anthropic spend** — $3.0000" in message
+
+
+async def test_usage_stays_within_discord_limits_with_many_models(
+    session_factory: SessionFactory,
+) -> None:
+    """Grouping by model made the row count unbounded.
+
+    Every model ever configured in a month gets its own row, so a few model
+    changes could push the report past Discord's 2,000-character content
+    limit and `/usage` would return nothing at all. It degrades to a shorter
+    report instead, and the totals still cover every row.
+    """
+    async with session_factory.begin() as session:
+        guild = Guild(discord_guild_id=123, name="Test Guild")
+        session.add(guild)
+        await session.flush()
+        for index in range(40):
+            session.add(
+                UsageLog(
+                    guild_id=guild.id,
+                    provider="anthropic",
+                    model=f"claude-some-very-long-model-name-{index}",
+                    tier="dialogue",
+                    input_tokens=1_000,
+                    cache_read_tokens=0,
+                    cache_creation_tokens=0,
+                    output_tokens=1_000,
+                    latency_ms=100,
+                    purpose="dialogue",
+                    created_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+
+    interaction = _interaction()
+    await _invoke(
+        ConfigCog.usage,
+        ConfigCog(session_factory, _settings("anthropic")),
+        interaction,
+    )
+
+    embed = interaction.response.send_message.await_args.kwargs["embed"]
+    assert len(embed.description) <= 4096, "over Discord's embed description limit"
+    assert "more combination(s)" in embed.description, "truncation not signalled"
+    # The totals must still account for every row, not just the shown ones.
+    assert "40 calls" in embed.description
