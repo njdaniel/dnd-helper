@@ -142,8 +142,10 @@ scene_message
   INDEX(scene_id, created_at)
 
 usage_log
-  id (pk), guild_id (fk), provider, model, input_tokens, cache_read_tokens,
-  output_tokens, latency_ms, purpose, created_at
+  id (pk), guild_id (fk), provider, model, tier, input_tokens,
+  cache_read_tokens, output_tokens, latency_ms, purpose, created_at
+  -- `tier` is stored, not derived: all three tiers may point at the same
+  -- model (the local default does), so model→tier is ambiguous.
 
 -- Phase 4 only; do not implement yet, but don't design it out:
 character_sheet

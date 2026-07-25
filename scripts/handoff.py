@@ -117,9 +117,63 @@ def is_ready(issue: dict) -> bool:
     return label_names(issue).isdisjoint(NOT_READY_LABELS)
 
 
-def ready_issues() -> list[dict]:
+CLOSES_RE = re.compile(r"\b(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
+
+
+def issues_with_open_prs() -> set[int]:
+    """Issue numbers already claimed by an open pull request.
+
+    An issue stays labelled ready until its PR merges, because the label
+    tracks dependencies rather than progress. Without this, `--next` keeps
+    handing out work that is already written — which in an unattended loop
+    means two agents building the same thing.
+    """
+    out = run_gh(["pr", "list", "--state", "open", "--json", "body", "--limit", "200"])
+    claimed: set[int] = set()
+    for pr in json.loads(out):
+        claimed.update(int(n) for n in CLOSES_RE.findall(pr.get("body") or ""))
+    return claimed
+
+
+def existing_branches() -> set[str]:
+    """Every branch name known locally or on the remote.
+
+    A branch matching an issue's derived name means someone — or some agent —
+    is already working it, even though no pull request exists yet. Without
+    this, an unattended loop hands out in-flight work.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "branch", "--all", "--format=%(refname:short)"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    if out.returncode != 0:
+        return set()
+    names = set()
+    for line in out.stdout.split("\n"):
+        name = line.strip().removeprefix("origin/")
+        if name:
+            names.add(name)
+    return names
+
+
+def ready_issues(include_claimed: bool = False) -> list[dict]:
     issues = fetch_open_issues()
     ready = [issue for issue in issues if is_ready(issue)]
+    if not include_claimed:
+        claimed = issues_with_open_prs()
+        branches = existing_branches()
+        ready = [
+            issue
+            for issue in ready
+            if issue["number"] not in claimed
+            and derive_branch_name(issue["number"], issue["title"]) not in branches
+        ]
     ready.sort(key=lambda issue: issue["number"])
     return ready
 
@@ -345,6 +399,14 @@ def cmd_issue(number: int) -> int:
             f"WARNING: issue #{number} is labelled 'blocked' by "
             f"{blocker_text}. Printing the prompt anyway, but confirm those "
             "blockers are actually closed before handing this off.",
+            file=sys.stderr,
+        )
+
+    if number in issues_with_open_prs():
+        print(
+            f"WARNING: issue #{number} already has an open pull request. "
+            "Handing it off again means two agents building the same thing — "
+            "review or merge the existing PR instead.",
             file=sys.stderr,
         )
 
