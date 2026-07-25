@@ -69,10 +69,7 @@ will run on less with a smaller model; NPC quality is the thing you trade away.
 git clone https://github.com/njdaniel/dnd-helper.git
 cd dnd-helper
 
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-pip install -e ".[dev]"
+make install
 ```
 
 ### 2. Create the Discord application
@@ -122,8 +119,8 @@ Fill in `DISCORD_TOKEN` and `DEV_GUILD_ID`. Every variable is commented in
 ### 5. Create the database and run
 
 ```bash
-alembic upgrade head
-python -m bot.main
+make migrate
+make run
 ```
 
 Then type `/ping` in your test server. If it answers, you're set up.
@@ -133,13 +130,16 @@ Then type `/ping` in your test server. If it answers, you're set up.
 ## Development
 
 ```bash
-ruff check . && ruff format --check .
-mypy bot/engine bot/db
-pytest
+make check
 ```
 
-All three must pass before a PR merges — CI enforces it. Tests use a fake model
-provider, so `pytest` never makes a real inference call.
+This runs linting, formatting checks, type checks, and the test suite. It must
+pass before a PR merges — CI enforces the same commands. Tests use a fake model
+provider, so `make test` never makes a real inference call.
+
+Run `make` to list every available task. Other useful targets include
+`make migrate`, `make run`, `make cli ARGS="..."`, and `make live` for the
+Ollama conformance test.
 
 Read [`CLAUDE.md`](CLAUDE.md) before contributing (or before pointing a coding
 agent at this repo — `AGENTS.md` symlinks to it). It holds the hard rules,
