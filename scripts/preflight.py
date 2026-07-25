@@ -149,11 +149,18 @@ def check_anthropic(config: Mapping[str, str]) -> list[str]:
 def main() -> int:
     """Print the provider readiness report and return a gate-friendly status."""
     config = load_config()
-    provider = config["LLM_PROVIDER"].lower()
+    # Compared exactly, not case-folded: Settings.llm_provider is a
+    # case-sensitive Literal, so accepting "OLLAMA" here would let preflight
+    # pass on a configuration the bot then refuses to start with — the one
+    # outcome a preflight check must never produce.
+    provider = config["LLM_PROVIDER"]
     print(f"Configured provider: {provider}")
     if provider not in {"ollama", "anthropic"}:
-        print(f"FAIL unsupported LLM_PROVIDER: {provider}")
-        print("     Fix: set `LLM_PROVIDER=ollama` or `LLM_PROVIDER=anthropic`")
+        print(f"FAIL unsupported LLM_PROVIDER: {provider!r}")
+        if provider.lower() in {"ollama", "anthropic"}:
+            print(f"     Fix: lowercase it — `LLM_PROVIDER={provider.lower()}`")
+        else:
+            print("     Fix: set `LLM_PROVIDER=ollama` or `LLM_PROVIDER=anthropic`")
         return 1
 
     print("Tier → model mapping:")
