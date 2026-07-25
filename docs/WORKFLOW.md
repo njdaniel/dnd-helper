@@ -81,6 +81,35 @@ Those are the moments to fan out multiple agents. Everything else, run in order.
 
 ---
 
+## Where questions live
+
+Three places, with a hard line between them. The line is *does this block
+work* — not how interesting it is.
+
+| Where | For | Ends when |
+|---|---|---|
+| **Issue + `decision` label** | An open question that blocks work and needs an outcome | You pick one → write the ADR → close the issue |
+| **[Discussions](../../../discussions)** | Open-ended, no deadline — "should we ever…", "has anyone tried…" | Maybe never. That's fine. |
+| **`docs/DECISIONS.md`** | The settled record: what was chosen and why | It's already the end |
+
+Decisions are **issues, not Discussions**, because an issue can block a task.
+`#7 blocked by #33` shows up in the dependency graph and stops an agent from
+building the wrong thing. A Discussion can't do that.
+
+The `.github/ISSUE_TEMPLATE/decision.yml` template asks for context, at least
+two options with their costs, reversibility, and a recommendation. If you can't
+name two options, it isn't a decision — just do the thing.
+
+**Reversibility is the field people skip and shouldn't.** Cheap-to-reverse
+decisions should be made fast and moved past; expensive ones deserve the
+argument. Storage layout (#33) is expensive *now* and nearly free to argue,
+which is exactly why it's open before #7 rather than after.
+
+Closing a decision issue means writing the ADR. An issue closed without one
+leaves the next person — or the next agent — with no record of why.
+
+---
+
 ## Handing an issue to a coding agent
 
 `AGENTS.md` symlinks to `CLAUDE.md`, so any agent that reads either gets the
