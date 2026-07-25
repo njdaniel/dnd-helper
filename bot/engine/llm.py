@@ -17,6 +17,7 @@ from bot.db import repo
 from bot.db.models import Guild, UsageLog
 from bot.engine.providers import LLMProvider, ProviderError
 from bot.engine.providers.anthropic import AnthropicProvider
+from bot.engine.providers.ollama import OllamaProvider
 from bot.engine.schemas import Message
 
 Tier = Literal["dialogue", "utility", "epic"]
@@ -135,9 +136,7 @@ def _provider_from_settings(settings: Settings) -> LLMProvider:
             raise ProviderConfigurationError("ANTHROPIC_API_KEY is required")
         return AnthropicProvider(key.get_secret_value())
     if settings.llm_provider == "ollama":
-        raise ProviderConfigurationError(
-            "the Ollama provider is delivered by issue 1.1b; inject a provider in tests"
-        )
+        return OllamaProvider(settings.ollama_host, settings.ollama_keep_alive)
     raise ProviderConfigurationError(
         f"unknown LLM_PROVIDER value: {settings.llm_provider!r}"
     )
