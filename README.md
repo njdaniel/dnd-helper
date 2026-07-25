@@ -110,9 +110,10 @@ in [`CLAUDE.md`](CLAUDE.md), and the same four commands CI runs.
 2. **Bot** tab → **Reset Token** → copy it. This is `DISCORD_TOKEN`. Treat it
    like a password — anyone holding it controls the bot.
 3. Still on the Bot tab, scroll to **Privileged Gateway Intents** and enable
-   **Message Content Intent**. This is required. If it is disabled, the bot
-   connects normally but `message.content` is silently empty, so every trigger
-   rule stops matching with nothing in the logs explaining why.
+   **Message Content Intent**. This is required, and the bot **will not start
+   without it**: it requests the intent at connect time, so Discord rejects the
+   gateway connection and startup fails with `PrivilegedIntentsRequired`. That
+   is a loud failure by design — the message names this exact toggle.
 4. **OAuth2 → URL Generator**:
    - Scopes: `bot`, `applications.commands`
    - Bot permissions: **View Channels**, **Send Messages**, **Manage
@@ -203,11 +204,15 @@ slash-command scope, guild sync, token, and process are wired up.
 
 For a fuller manual verification, stop the bot, disable **Message Content
 Intent** in the Developer Portal, and start it again. Confirm that startup
-reports the missing Developer Portal toggle, then re-enable it. Also remove
-**Manage Webhooks** temporarily and verify the persona failure mode before
-restoring the permission with the invite link. These deliberately broken
-checks require a human-operated Discord server; do not perform them in the
-campaign server.
+fails with a message naming that toggle rather than hanging or connecting
+silently, then re-enable it.
+
+**Manage Webhooks** cannot be verified yet — nothing posts as a persona until
+the speech layer lands. When it does, the check is: remove the permission, have
+an NPC speak, and confirm it appears as the bot rather than as itself. Until
+then, tick the permission on the invite and move on.
+
+Do these deliberately-broken checks in a throwaway server, not your campaign.
 
 ---
 
