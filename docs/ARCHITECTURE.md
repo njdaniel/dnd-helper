@@ -90,6 +90,16 @@ Both reward the same prompt ordering (static first), so `persona.py` does not
 branch on provider. Keeping providers behind one protocol is what makes "is the
 local model good enough?" an experiment rather than a rewrite — see ADR-0001.
 
+### Local model baseline
+
+`qwen3.6:27b` is the known-good Ollama baseline: it passed the structured-output
+conformance test 10/10. Plan on 24 GB of VRAM so its quantized weights and a
+useful context window fit together. A smaller model may make lower-VRAM
+hardware viable, but it must pass the conformance test before becoming a
+supported choice. Availability is checked separately with
+`python scripts/preflight.py`; preflight intentionally does not repeat the
+quality test.
+
 ---
 
 ## Data model
