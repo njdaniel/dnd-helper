@@ -101,14 +101,33 @@ every NPC speaks as the bot instead of as itself.
 **Local (default):**
 
 ```bash
-ollama pull qwen3.6:27b     # or a Hermes-family model
-ollama list                 # confirm it's there
+ollama pull qwen3.6:27b
+python scripts/preflight.py
 ```
+
+`qwen3.6:27b` is the known-good local model: it passed the structured-output
+conformance test 10/10. Its quantized weights leave enough room for a useful
+context window on a 24 GB GPU; treat **24 GB VRAM as the practical
+requirement**. Quantization and context length change actual memory use, so
+smaller GPUs require a smaller model and a fresh conformance run.
+
+On the project's RTX 4090 (24 GB), `qwen3.6:27b` takes **16–36 seconds to
+return a reply**. That is workable for prompt tuning and noticeable during a
+live session. Keep `OLLAMA_KEEP_ALIVE` enabled to avoid adding model-load time
+to the first line of each scene.
+
+The preflight command does not start the bot or require a Discord token. It
+checks the selected provider, prints the tier-to-model mapping, confirms that
+Ollama is reachable and each configured model is installed, and reports free
+NVIDIA VRAM when `nvidia-smi` is available. Every failed check includes the
+command or environment change needed to fix it, and any failure exits non-zero.
 
 **Hosted (optional baseline):** create a key at
 [console.anthropic.com](https://console.anthropic.com) → API Keys — and **set a
 monthly spend limit** under Settings → Limits while you're there. Then set
-`LLM_PROVIDER=anthropic` in your `.env`.
+`LLM_PROVIDER=anthropic` in your `.env`. In this mode
+`python scripts/preflight.py` checks that `ANTHROPIC_API_KEY` is present and
+skips local Ollama checks; it does not make a metered request.
 
 ### 4. Configure
 
