@@ -174,6 +174,96 @@ leaves the next person — or the next agent — with no record of why.
 
 ---
 
+## The orchestrated loop
+
+How an issue actually becomes merged code. Written down because the *rules*
+above are easy to reconstruct and this sequence is not.
+
+```
+handoff.py --list          ← what is genuinely ready
+      ↓
+git worktree + venv        ← isolation, dependencies pre-installed
+      ↓
+handoff.py <n>             ← prompt built from the live issue + CLAUDE.md
+      ↓
+codex exec -s workspace-write -C <worktree>
+      ↓
+   ┌──┴──────────────┐
+   │ agent hits a    │ → fix the ISSUE, regenerate the prompt, rerun
+   │ spec conflict   │
+   └──┬──────────────┘
+      ↓
+run the gate OUTSIDE the sandbox     ← the agent structurally cannot
+      ↓
+review against the acceptance criteria, one at a time
+      ↓
+commit + open the PR                 ← the agent cannot
+      ↓
+codex review --base main             ← independent pass
+      ↓
+branch protection: CI, up to date, linear, conversations resolved
+      ↓
+human verification for needs-human
+      ↓
+merge → unblock.yml runs → the next issues become ready
+```
+
+### Who does what, and why it is not a preference
+
+| Step | Who | Why not the agent |
+|---|---|---|
+| Write the code | agent | — |
+| Run the tests | you | The sandbox has no network, so `pip install` fails, and `aiosqlite` hangs there even with a pre-built venv |
+| Commit | you | A worktree's `.git` lives outside the sandbox and is read-only |
+| Independent review | `codex review` | Whoever wrote the spec shares its blind spots |
+| "Does it work in Discord / sound like a person" | you | Taste, and a real token |
+
+**Treat an agent's "all checks passed" as unverified.** It has repeatedly been
+truthful about ruff and mypy while structurally unable to execute pytest. That
+is not dishonesty; it is the sandbox. Reproduce the gate yourself before
+believing it.
+
+### Setting up a run
+
+```bash
+python3 scripts/handoff.py <n> > /tmp/handoff-<n>.txt
+BR=$(grep -m1 '^Branch: ' /tmp/handoff-<n>.txt | cut -d' ' -f2)   # use the derived name
+git worktree add ../dnd-helper-wt-<n> -b "$BR"
+cd ../dnd-helper-wt-<n> && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+codex exec -s workspace-write -C "$PWD" "$(cat /tmp/handoff-<n>.txt)"
+```
+
+Take the branch name from `handoff.py` rather than inventing one, or the
+in-flight guard in `--list` will not match it and the issue will be offered to
+a second agent.
+
+Append to the prompt: where the venv is, that there is no network, and that a
+pytest hang on `aiosqlite` is the environment rather than their bug — otherwise
+an agent may "fix" a test that was never broken.
+
+### The two feedback loops that carry the weight
+
+**A spec conflict is fixed on the issue, never in the code.** When an agent
+stops and says the scope forbids something it needs, edit the GitHub issue,
+then regenerate the prompt. `handoff.py` reads live, so the correction
+propagates. Patching around it in code leaves the next agent at the same wall
+and the issue still wrong.
+
+**Review is separated from authorship.** Run `codex review --base main` in the
+PR's worktree. It has found defects that were looked at directly and cleared.
+
+### What this has actually caught
+
+Eleven defects after CI was green — six from review, five from the independent
+pass, **none from CI**. Seven of the eleven were gaps in the *issue*, not the
+implementation: the agents built what was asked for.
+
+The lesson worth carrying: **issue quality is the bottleneck, not agent
+capability.** Time spent sharpening scope and acceptance criteria pays back
+more than time spent reviewing output.
+
+---
+
 ## Handing an issue to a coding agent
 
 `AGENTS.md` symlinks to `CLAUDE.md`, so any agent that reads either gets the
