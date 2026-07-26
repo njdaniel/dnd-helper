@@ -16,9 +16,14 @@ def settings() -> Settings:
 
 
 def test_requests_message_content_intent(settings: Settings) -> None:
-    """The failure this guards is silent: without the intent Discord connects
-    normally and delivers empty `message.content`, so every trigger rule in the
-    router stops matching with nothing in the logs to explain it."""
+    """Requesting the intent is what makes a missing portal toggle *loud*.
+
+    Discord rejects the connection with `PrivilegedIntentsRequired` when the
+    code asks for an intent the application is not approved for, and `run()`
+    turns that into a log line naming the toggle. Drop this line and the
+    failure changes shape entirely: the bot connects fine and delivers empty
+    `message.content`, so every trigger rule stops matching with nothing in
+    the logs to explain it."""
     client = DndHelperBot(settings)
     assert client.intents.message_content is True
 
@@ -78,3 +83,53 @@ def test_log_formatter_preserves_structured_fields() -> None:
     assert payload["level"] == "INFO"
     # LogRecord internals must not leak into the log line.
     assert not {"args", "msg", "levelno", "pathname"} & set(payload)
+
+
+async def test_every_command_extension_loads_against_a_real_bot(
+    settings: Settings,
+) -> None:
+    """A cog whose setup() raises takes the whole bot down.
+
+    Extensions are auto-discovered, so `setup_hook` loads all of them and a
+    single missing dependency stops the bot from starting at all — not just
+    that one command group. `LoreCog` required `bot.session_factory`, which
+    `run()` never attached, so the engine it built stayed a local variable and
+    every command became unavailable. Tests passed throughout: nothing else
+    exercised startup.
+    """
+    import importlib
+    import pkgutil
+    from unittest.mock import AsyncMock, MagicMock
+
+    import bot.commands
+    from bot.db.models import Base
+    from bot.db.session import create_engine, create_session_factory
+
+    engine = create_engine("sqlite+aiosqlite://")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    fake_bot = MagicMock()
+    fake_bot.settings = settings
+    fake_bot.session_factory = create_session_factory(engine)
+    fake_bot.add_cog = AsyncMock()
+
+    modules = [
+        name
+        for _, name, _ in pkgutil.iter_modules(
+            bot.commands.__path__, f"{bot.commands.__name__}."
+        )
+    ]
+    assert modules, "no command extensions discovered"
+
+    for name in modules:
+        module = importlib.import_module(name)
+        setup = getattr(module, "setup", None)
+        if setup is None:
+            continue
+        await setup(fake_bot)
+
+    assert fake_bot.add_cog.await_count == len(
+        [m for m in modules if hasattr(importlib.import_module(m), "setup")]
+    )
+    await engine.dispose()

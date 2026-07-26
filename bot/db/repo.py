@@ -72,14 +72,93 @@ async def create_lore_entry(
 
 
 async def get_lore_entry(
-    session: AsyncSession, guild_id: int, lore_entry_id: int
+    session: AsyncSession,
+    guild_id: int,
+    lore_entry_id: int,
+    *,
+    visible_to: str | None = None,
 ) -> LoreEntry | None:
-    result = await session.scalars(
-        select(LoreEntry).where(
-            LoreEntry.guild_id == guild_id, LoreEntry.id == lore_entry_id
-        )
+    statement = select(LoreEntry).where(
+        LoreEntry.guild_id == guild_id, LoreEntry.id == lore_entry_id
     )
+    if visible_to is not None:
+        statement = statement.where(LoreEntry.visibility == visible_to)
+    result = await session.scalars(statement)
     return result.first()
+
+
+async def list_lore_entries(
+    session: AsyncSession,
+    guild_id: int,
+    *,
+    category: str | None = None,
+    visible_to: str | None = None,
+) -> list[LoreEntry]:
+    statement = select(LoreEntry).where(LoreEntry.guild_id == guild_id)
+    if category is not None:
+        statement = statement.where(LoreEntry.category == category)
+    if visible_to is not None:
+        statement = statement.where(LoreEntry.visibility == visible_to)
+    statement = statement.order_by(LoreEntry.title, LoreEntry.id)
+    return list((await session.scalars(statement)).all())
+
+
+async def get_lore_entry_by_title(
+    session: AsyncSession,
+    guild_id: int,
+    title: str,
+    *,
+    visible_to: str | None = None,
+) -> LoreEntry | None:
+    statement = select(LoreEntry).where(
+        LoreEntry.guild_id == guild_id,
+        LoreEntry.title == title,
+    )
+    if visible_to is not None:
+        statement = statement.where(LoreEntry.visibility == visible_to)
+    return (await session.scalars(statement.order_by(LoreEntry.id))).first()
+
+
+async def update_lore_entry(
+    session: AsyncSession,
+    guild_id: int,
+    lore_entry_id: int,
+    *,
+    visible_to: str | None = None,
+    **values: object,
+) -> LoreEntry | None:
+    entry = await get_lore_entry(
+        session,
+        guild_id,
+        lore_entry_id,
+        visible_to=visible_to,
+    )
+    if entry is None:
+        return None
+    for key, value in values.items():
+        setattr(entry, key, value)
+    await session.flush()
+    return entry
+
+
+async def delete_lore_entry(
+    session: AsyncSession,
+    guild_id: int,
+    lore_entry_id: int,
+    *,
+    visible_to: str | None = None,
+) -> bool:
+    entry = await get_lore_entry(
+        session,
+        guild_id,
+        lore_entry_id,
+        visible_to=visible_to,
+    )
+    if entry is None:
+        return False
+    await session.delete(entry)
+    await session.flush()
+    return True
 
 
 async def create_scene(session: AsyncSession, guild_id: int, **values: object) -> Scene:
