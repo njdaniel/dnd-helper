@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import discord
 from discord import Interaction, app_commands
@@ -69,13 +70,27 @@ def _field(value: str) -> str:
     return value[: EMBED_FIELD_LIMIT - 1] + "\u2026"
 
 
+def is_usable_image_url(value: str) -> bool:
+    """Return whether Discord could plausibly fetch this as an image.
+
+    Checked before storing, not after: `avatar_url` is handed to Discord twice —
+    as an embed thumbnail in `/npc view` and as the per-message webhook avatar
+    once the NPC speaks — and Discord rejects the *whole* payload on a bad URL.
+    A typo saved here would break viewing the NPC and silence its face, with the
+    error surfacing far from the command that caused it. Reachability is
+    deliberately not checked: that is a network call in an interaction handler.
+    """
+    parsed = urlparse(value.strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
 def persona_embed(persona: Persona, *, include_secrets: bool) -> discord.Embed:
     """Render a persona without accidentally exposing its secrets."""
     embed = discord.Embed(title=persona.name, description=_field(persona.public_desc))
     embed.add_field(name="Status", value=persona.status, inline=True)
     embed.add_field(
         name="Tags",
-        value=", ".join(persona.knowledge_tags) or "None",
+        value=_field(", ".join(persona.knowledge_tags) or "None"),
         inline=True,
     )
     embed.add_field(name="Personality", value=_field(persona.personality), inline=False)
@@ -314,7 +329,15 @@ class Npc(commands.GroupCog, group_name="npc"):
         guild = await self._guild_or_reply(interaction)
         if guild is None:
             return
-        persona = await self.service.set_avatar(guild.id, guild.name, name, url)
+        if not is_usable_image_url(url):
+            await interaction.response.send_message(
+                "That avatar URL is not usable. Discord fetches the image from "
+                "a public address, so it must start with `http://` or "
+                "`https://` — a file path on your machine will not work.",
+                ephemeral=True,
+            )
+            return
+        persona = await self.service.set_avatar(guild.id, guild.name, name, url.strip())
         if persona is None:
             await interaction.response.send_message(
                 f'No NPC named "{name}" was found.', ephemeral=True

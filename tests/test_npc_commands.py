@@ -130,7 +130,10 @@ def test_persona_fields_fit_discord_embed_limits() -> None:
         personality="y" * 5000,
         goals="z" * 5000,
         secrets="s" * 5000,
-        knowledge_tags=[],
+        # Tags are the one field a user can overrun without going through a
+        # modal: `/npc set-tags` takes a plain string option, so the joined
+        # value has no upper bound of its own.
+        knowledge_tags=[f"tag-{index}" for index in range(300)],
         status="active",
         created_by=1,
     )
@@ -138,6 +141,20 @@ def test_persona_fields_fit_discord_embed_limits() -> None:
     for field in embed.fields:
         assert len(field.value or "") <= EMBED_FIELD_LIMIT, field.name
     assert len(embed.description or "") <= EMBED_FIELD_LIMIT
+
+
+def test_avatar_url_is_rejected_before_it_reaches_discord() -> None:
+    """A stored bad URL breaks `/npc view` and the NPC's webhook face, and the
+    error surfaces far from the command that caused it. Refuse it at input."""
+    from bot.commands.npc import is_usable_image_url
+
+    assert is_usable_image_url("https://example.com/vera.png")
+    assert is_usable_image_url("  http://example.com/vera.png  ")
+
+    assert not is_usable_image_url("/home/nick/portraits/vera.png")
+    assert not is_usable_image_url("file:///home/nick/portraits/vera.png")
+    assert not is_usable_image_url("example.com/vera.png")
+    assert not is_usable_image_url("")
 
 
 def test_modal_inputs_cannot_exceed_what_an_embed_can_render() -> None:
