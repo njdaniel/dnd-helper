@@ -71,6 +71,20 @@ class Say(commands.Cog):
                 "`/say` can only be used in a server channel.", ephemeral=True
             )
             return
+        # Checked before generating, not after. An NPC speaks through a channel
+        # webhook, and a thread — like a voice or forum channel — has no
+        # `webhooks()` or `create_webhook()` of its own. Left to fail naturally
+        # it raises inside the speech layer *after* a 16–36s local generation
+        # has already run and been charged to the reply budget, and the player
+        # sees nothing posted.
+        if not _can_host_a_webhook(channel):
+            await interaction.response.send_message(
+                "NPCs speak through a channel webhook, which this kind of "
+                "channel does not support. Use `/say` in a regular text "
+                "channel.",
+                ephemeral=True,
+            )
+            return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
@@ -146,6 +160,19 @@ class Say(commands.Cog):
             await interaction.followup.send(str(error), ephemeral=True)
             return
         await interaction.followup.send(f"{npc} spoke.", ephemeral=True)
+
+
+def _can_host_a_webhook(channel: object) -> bool:
+    """Whether an NPC can be given a name and face in this channel.
+
+    Asked by capability rather than by type: threads, voice and forum channels
+    all lack the webhook API, and a type allowlist would have to grow every
+    time Discord adds one. Anything that cannot be confirmed is refused, which
+    costs a usable channel at worst and never burns a generation.
+    """
+    return callable(getattr(channel, "webhooks", None)) and callable(
+        getattr(channel, "create_webhook", None)
+    )
 
 
 def _is_dm_only_channel(interaction: Interaction, dm_role_id: int | None) -> bool:

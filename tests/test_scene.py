@@ -1,5 +1,6 @@
 """Scene lifecycle and transcript tests."""
 
+import discord
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -215,3 +216,26 @@ async def test_dm_narration_is_not_logged_as_a_player_line(
 
     by_author = {message.author_name: message.author_type for message in messages}
     assert by_author == {"A Player": "player", "The DM": "dm", "The Owner": "dm"}
+
+
+def test_say_refuses_channels_that_cannot_host_a_webhook() -> None:
+    """Refused before generating, not after.
+
+    An NPC speaks through a channel webhook, and a thread has none. Left to
+    fail naturally it raises inside the speech layer after a 16–36s local
+    generation has run and been charged to the reply budget, with nothing
+    posted for it.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from bot.commands.say import _can_host_a_webhook
+
+    text_channel = MagicMock()
+    text_channel.webhooks = AsyncMock()
+    text_channel.create_webhook = AsyncMock()
+    assert _can_host_a_webhook(text_channel) is True
+
+    thread = MagicMock(spec=discord.Thread)
+    assert _can_host_a_webhook(thread) is False
+
+    assert _can_host_a_webhook(object()) is False
