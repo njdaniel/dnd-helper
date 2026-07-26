@@ -62,11 +62,11 @@ class Say(commands.Cog):
         # per-channel lock live on it, and a per-call instance would start
         # both empty every time.
         self._speech = Speech()
-        # Generation *and* posting are serialized per channel. The speech
-        # layer's own lock only covers the webhook sends, so two concurrent
-        # /say calls would both generate first and post in completion order —
-        # a fast reply overtaking the request that was made before it, and
-        # each generation reading a transcript missing the other's line.
+        # One lock per channel, covering the whole command. The speech layer's
+        # own lock only wraps the webhook sends, which is too late: two
+        # concurrent /say calls would each snapshot the transcript, both
+        # generate, and post in completion order — a fast reply overtaking the
+        # request made before it, and neither prompt containing the other line.
         self._channel_locks: dict[int, asyncio.Lock] = {}
 
     async def cog_unload(self) -> None:
@@ -100,76 +100,91 @@ class Say(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        # Held across recording the request, building the prompt, generating,
+        # and posting. Taking it any later lets a second /say snapshot the
+        # transcript before the first has posted its reply, so the two are
+        # generated against the same conversation and answer out of order.
+        lock = self._channel_locks.setdefault(channel.id, asyncio.Lock())
         try:
-            async with session_scope(self.sessions) as session:
-                db_guild = await repo.get_or_create_guild(session, guild.id, guild.name)
-                scene = await repo.get_active_scene(session, db_guild.id, channel.id)
-                if scene is None:
-                    await interaction.followup.send(
-                        "There is no active scene in this channel.", ephemeral=True
+            async with lock:
+                async with session_scope(self.sessions) as session:
+                    db_guild = await repo.get_or_create_guild(
+                        session, guild.id, guild.name
                     )
-                    return
-                persona = await repo.get_persona_by_name(session, db_guild.id, npc)
-                on_stage = await repo.list_scene_personas(
-                    session, db_guild.id, scene.id
-                )
-                if persona is None or persona.id not in {item.id for item in on_stage}:
-                    await interaction.followup.send(
-                        f'"{npc}" is not on stage in this scene.', ephemeral=True
+                    scene = await repo.get_active_scene(
+                        session, db_guild.id, channel.id
                     )
-                    return
-
-                await repo.create_scene_message(
-                    session,
-                    db_guild.id,
-                    scene_id=scene.id,
-                    discord_message_id=interaction.id,
-                    author_type=(
-                        "dm" if _is_dm(interaction, db_guild.dm_role_id) else "player"
-                    ),
-                    author_name=interaction.user.display_name,
-                    persona_id=None,
-                    content=message,
-                )
-                location = None
-                if scene.location_lore_id is not None:
-                    lore = await repo.get_lore_entry(
-                        session, db_guild.id, scene.location_lore_id
-                    )
-                    location = lore.title if lore is not None else None
-                prompt = SayScenePrompt(
-                    content_rating=db_guild.content_rating,
-                    location=location,
-                    on_stage=[item.name for item in on_stage],
-                    summary=scene.summary,
-                    messages=await repo.list_scene_messages(
+                    if scene is None:
+                        await interaction.followup.send(
+                            "There is no active scene in this channel.", ephemeral=True
+                        )
+                        return
+                    persona = await repo.get_persona_by_name(session, db_guild.id, npc)
+                    on_stage = await repo.list_scene_personas(
                         session, db_guild.id, scene.id
-                    ),
-                )
+                    )
+                    if persona is None or persona.id not in {
+                        item.id for item in on_stage
+                    }:
+                        await interaction.followup.send(
+                            f'"{npc}" is not on stage in this scene.', ephemeral=True
+                        )
+                        return
 
-            # Deliberately a second transaction. The block above ends here, so
-            # the player's line is committed and SQLite's write lock released
-            # before the model is called. A local 27B reply takes 16–36s on the
-            # reference machine; holding the write lock for that long makes any
-            # concurrent `/say` or `on_message` log fail with "database is
-            # locked". Sessions are created with expire_on_commit=False, so the
-            # objects loaded above stay usable here.
-            lock = self._channel_locks.setdefault(channel.id, asyncio.Lock())
-            async with lock, session_scope(self.sessions) as session:
-                reply = await generate_reply(
-                    LLMEngine(
-                        settings=self.settings,
-                        session=session,
-                        guild_id=db_guild.id,
-                    ),
-                    persona,
-                    prompt,
-                    is_dm_context=_is_dm_only_channel(interaction, db_guild.dm_role_id),
-                    tier="epic" if scene.mode == "epic" else "dialogue",
-                )
-                await self._speech.speak(
-                    session, cast(WebhookChannel, channel), persona, reply.line
-                )
+                    await repo.create_scene_message(
+                        session,
+                        db_guild.id,
+                        scene_id=scene.id,
+                        discord_message_id=interaction.id,
+                        author_type=(
+                            "dm"
+                            if _is_dm(interaction, db_guild.dm_role_id)
+                            else "player"
+                        ),
+                        author_name=interaction.user.display_name,
+                        persona_id=None,
+                        content=message,
+                    )
+                    location = None
+                    if scene.location_lore_id is not None:
+                        lore = await repo.get_lore_entry(
+                            session, db_guild.id, scene.location_lore_id
+                        )
+                        location = lore.title if lore is not None else None
+                    prompt = SayScenePrompt(
+                        content_rating=db_guild.content_rating,
+                        location=location,
+                        on_stage=[item.name for item in on_stage],
+                        summary=scene.summary,
+                        messages=await repo.list_scene_messages(
+                            session, db_guild.id, scene.id
+                        ),
+                    )
+
+                # Deliberately a second transaction. The block above ends here, so
+                # the player's line is committed and SQLite's write lock released
+                # before the model is called. A local 27B reply takes 16–36s on the
+                # reference machine; holding the write lock for that long makes any
+                # concurrent `/say` or `on_message` log fail with "database is
+                # locked". Sessions are created with expire_on_commit=False, so the
+                # objects loaded above stay usable here.
+                async with session_scope(self.sessions) as session:
+                    reply = await generate_reply(
+                        LLMEngine(
+                            settings=self.settings,
+                            session=session,
+                            guild_id=db_guild.id,
+                        ),
+                        persona,
+                        prompt,
+                        is_dm_context=_is_dm_only_channel(
+                            interaction, db_guild.dm_role_id
+                        ),
+                        tier="epic" if scene.mode == "epic" else "dialogue",
+                    )
+                    await self._speech.speak(
+                        session, cast(WebhookChannel, channel), persona, reply.line
+                    )
         except BudgetExceededError as error:
             await interaction.followup.send(str(error), ephemeral=True)
             return
