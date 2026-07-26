@@ -103,66 +103,82 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
 
 
 def test_say_derives_secret_visibility_from_the_channel_not_the_caller() -> None:
-    """A DM running `/say` in a channel a player can read must not pull secrets.
+    """A DM running `/say` where a player can read must not pull secrets in.
 
     The reply is posted publicly by a webhook regardless of who invoked the
     command, so deriving `is_dm_context` from the caller's role puts
     `persona.secrets` into a prompt whose output every player reads. Hard
     rule #1: the barrier is the absence of the string, not an instruction.
 
-    Denying `@everyone` is not sufficient either — a channel can deny the
-    default role and still grant one player role or member `view_channel`.
-    What matters is who can actually read it.
+    Decided from permission overwrites rather than `channel.members`, because
+    the member cache is incomplete without the privileged members intent and
+    an uncached player would simply be missing from the list.
     """
     from unittest.mock import MagicMock
 
     from bot.commands.say import _is_dm_only_channel
 
-    DM_ROLE, PLAYER_ROLE = 700, 800
-    OWNER = 1
+    DM_ROLE, PLAYER_ROLE, OWNER, BOT = 700, 800, 1, 2
 
-    def member(user_id: int, *role_ids: int) -> MagicMock:
+    def target(target_id: int) -> MagicMock:
         value = MagicMock()
-        value.id = user_id
-        value.roles = [MagicMock(id=role_id) for role_id in role_ids]
+        value.id = target_id
         return value
 
-    def channel_with(*members: MagicMock) -> MagicMock:
+    def overwrite(view: bool | None) -> MagicMock:
         value = MagicMock()
-        value.guild = MagicMock()
-        value.guild.owner_id = OWNER
-        value.channel = MagicMock()
-        value.channel.members = list(members)
+        value.view_channel = view
         return value
 
-    dm = member(2, DM_ROLE)
-    player = member(3, PLAYER_ROLE)
-    owner = member(OWNER)
+    everyone = target(999)
 
-    # Only DMs can read it: the one place secrets belong.
-    assert _is_dm_only_channel(channel_with(dm, owner), DM_ROLE) is True
+    def channel_with(**grants: bool | None) -> MagicMock:
+        interaction = MagicMock()
+        interaction.guild = MagicMock()
+        interaction.guild.default_role = everyone
+        interaction.guild.owner_id = OWNER
+        interaction.guild.me = target(BOT)
+        table = {everyone: overwrite(grants.pop("everyone", False))}
+        for name, view in grants.items():
+            table[
+                target({"dm": DM_ROLE, "player": PLAYER_ROLE, "owner": OWNER}[name])
+            ] = overwrite(view)
+        interaction.channel = MagicMock()
+        interaction.channel.overwrites = table
+        return interaction
 
-    # The tavern. Everyone reads it, whoever typed the command.
-    assert _is_dm_only_channel(channel_with(dm, player), DM_ROLE) is False
+    # @everyone denied, only the DM role granted: the one place secrets belong.
+    assert _is_dm_only_channel(channel_with(dm=True), DM_ROLE) is True
 
-    # The case that a default-role check alone would get wrong: @everyone is
-    # denied, but one player was granted access by an overwrite.
-    assert _is_dm_only_channel(channel_with(dm, owner, player), DM_ROLE) is False
+    # The tavern: @everyone can read it.
+    assert _is_dm_only_channel(channel_with(everyone=True, dm=True), DM_ROLE) is False
 
-    # No DM role configured — nobody but the owner qualifies.
-    assert _is_dm_only_channel(channel_with(dm), None) is False
+    # The case a bare @everyone check gets wrong: denied by default, but one
+    # player role was granted access anyway.
+    assert _is_dm_only_channel(channel_with(dm=True, player=True), DM_ROLE) is False
 
-    # Undeterminable cases fail closed: player-facing.
+    # No overwrite on @everyone at all means it inherits — not established as
+    # private.
+    inherited = channel_with(dm=True)
+    inherited.channel.overwrites = {
+        key: value
+        for key, value in inherited.channel.overwrites.items()
+        if key is not everyone
+    }
+    assert _is_dm_only_channel(inherited, DM_ROLE) is False
+
+    # No DM role configured: there is no DM-only channel to speak of.
+    assert _is_dm_only_channel(channel_with(dm=True), None) is False
+
+    # Undeterminable cases fail closed.
     no_guild = MagicMock()
     no_guild.guild = None
     assert _is_dm_only_channel(no_guild, DM_ROLE) is False
 
-    no_member_list = MagicMock()
-    no_member_list.guild = MagicMock()
-    no_member_list.channel = object()
-    assert _is_dm_only_channel(no_member_list, DM_ROLE) is False
-
-    assert _is_dm_only_channel(channel_with(), DM_ROLE) is False
+    no_overwrites = MagicMock()
+    no_overwrites.guild = MagicMock()
+    no_overwrites.channel = object()
+    assert _is_dm_only_channel(no_overwrites, DM_ROLE) is False
 
 
 def test_speech_state_survives_across_say_invocations() -> None:

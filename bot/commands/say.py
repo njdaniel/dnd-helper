@@ -201,7 +201,7 @@ def _can_host_a_webhook(channel: object, me: object) -> bool:
 
 
 def _is_dm_only_channel(interaction: Interaction, dm_role_id: int | None) -> bool:
-    """Whether every member who can read this channel is a DM.
+    """Whether this channel is private to the DM.
 
     Secret visibility is a property of the **destination**, not the caller. A
     DM running `/say` in the tavern still posts the reply where every player
@@ -209,32 +209,49 @@ def _is_dm_only_channel(interaction: Interaction, dm_role_id: int | None) -> boo
     `persona.secrets` and `dm_only` lore into a prompt whose output is public.
     That is hard rule #1, and the reason the parameter is explicit at all.
 
-    Asking only whether `@everyone` is denied is not enough: a channel can deny
-    the default role and still grant `view_channel` to a player role or to an
-    individual member, and that channel is not private. The question that
-    actually matters is who ends up able to read it, so this checks the
-    channel's resolved member list rather than any single overwrite.
+    Decided from the channel's permission overwrites, which arrive with the
+    channel itself. Two tempting shortcuts are both wrong:
 
-    Everything undeterminable counts as player-facing — an unknown channel
-    type, no readable member list, or a list that is empty. The fail-safe
-    direction is to omit a secret that could have been used, never to include
-    one that should not have been.
+    * *"`@everyone` is denied"* alone is not privacy — a channel can deny the
+      default role and still grant `view_channel` to a player role or to one
+      member by overwrite.
+    * *"every member in `channel.members` is a DM"* reads a cache that is not
+      guaranteed complete. `DndHelperBot` uses `Intents.default()`, which
+      excludes the privileged members intent, so an uncached player who can
+      read the channel would simply be absent from the list and the check
+      would answer "private" about a public room.
+
+    So: `@everyone` must be denied, and every overwrite that grants
+    `view_channel` must belong to the DM role, the guild owner, or the bot.
+    Without a configured `dm_role_id` there is no DM-only channel at all.
+
+    A server administrator can read any channel regardless of overwrites, so
+    strictly this means "private except to admins" — accepted, since an admin
+    already controls the bot and its database.
+
+    Everything undeterminable counts as player-facing. The fail-safe direction
+    is to omit a secret that could have been used, never to include one that
+    should not have been.
     """
     guild = interaction.guild
     channel = interaction.channel
-    if guild is None or channel is None:
+    if guild is None or channel is None or dm_role_id is None:
         return False
-    members = getattr(channel, "members", None)
-    if not members:
+    overwrites = getattr(channel, "overwrites", None)
+    if not overwrites:
         return False
+
+    everyone = overwrites.get(guild.default_role)
+    if everyone is None or everyone.view_channel is not False:
+        return False
+
+    permitted = {dm_role_id, guild.owner_id}
+    if guild.me is not None:
+        permitted.add(guild.me.id)
     return all(
-        may_view_secrets(
-            user_id=member.id,
-            owner_id=guild.owner_id,
-            role_ids={role.id for role in getattr(member, "roles", ())},
-            dm_role_id=dm_role_id,
-        )
-        for member in members
+        getattr(target, "id", None) in permitted
+        for target, overwrite in overwrites.items()
+        if overwrite.view_channel
     )
 
 
