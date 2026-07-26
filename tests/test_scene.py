@@ -221,21 +221,34 @@ async def test_dm_narration_is_not_logged_as_a_player_line(
 def test_say_refuses_channels_that_cannot_host_a_webhook() -> None:
     """Refused before generating, not after.
 
-    An NPC speaks through a channel webhook, and a thread has none. Left to
-    fail naturally it raises inside the speech layer after a 16–36s local
+    An NPC speaks through a channel webhook. Two things stop that, and both
+    surface only once the speech layer tries to post — after a 16-36s local
     generation has run and been charged to the reply budget, with nothing
-    posted for it.
+    posted for it: a channel type with no webhook API, and a missing
+    **Manage Webhooks** permission, which is the one people miss on invite.
     """
     from unittest.mock import AsyncMock, MagicMock
 
     from bot.commands.say import _can_host_a_webhook
 
-    text_channel = MagicMock()
-    text_channel.webhooks = AsyncMock()
-    text_channel.create_webhook = AsyncMock()
-    assert _can_host_a_webhook(text_channel) is True
+    me = MagicMock()
 
-    thread = MagicMock(spec=discord.Thread)
-    assert _can_host_a_webhook(thread) is False
+    def channel(*, has_api: bool, may_manage: bool) -> MagicMock:
+        value = MagicMock(spec=[] if not has_api else None)
+        if has_api:
+            value.webhooks = AsyncMock()
+            value.create_webhook = AsyncMock()
+            value.permissions_for.return_value.manage_webhooks = may_manage
+        return value
 
-    assert _can_host_a_webhook(object()) is False
+    assert _can_host_a_webhook(channel(has_api=True, may_manage=True), me) is True
+
+    # Has the API, lacks the permission: webhooks() would raise Forbidden.
+    assert _can_host_a_webhook(channel(has_api=True, may_manage=False), me) is False
+
+    # A thread has no webhook API of its own at all.
+    assert _can_host_a_webhook(MagicMock(spec=discord.Thread), me) is False
+    assert _can_host_a_webhook(object(), me) is False
+
+    # Unknown bot member: refuse rather than guess.
+    assert _can_host_a_webhook(channel(has_api=True, may_manage=True), None) is False

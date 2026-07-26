@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
+import discord
 from discord import Interaction, app_commands
 from discord.ext import commands
 
@@ -77,11 +78,12 @@ class Say(commands.Cog):
         # it raises inside the speech layer *after* a 16–36s local generation
         # has already run and been charged to the reply budget, and the player
         # sees nothing posted.
-        if not _can_host_a_webhook(channel):
+        if not _can_host_a_webhook(channel, guild.me):
             await interaction.response.send_message(
-                "NPCs speak through a channel webhook, which this kind of "
-                "channel does not support. Use `/say` in a regular text "
-                "channel.",
+                "NPCs speak through a channel webhook, and I cannot make one "
+                "here. Either this channel type does not support webhooks "
+                "(threads, voice and forum channels do not), or I am missing "
+                "the **Manage Webhooks** permission on it.",
                 ephemeral=True,
             )
             return
@@ -159,20 +161,43 @@ class Say(commands.Cog):
         except BudgetExceededError as error:
             await interaction.followup.send(str(error), ephemeral=True)
             return
+        except discord.Forbidden:
+            # The permission was checked up front, so reaching here means it
+            # changed mid-command. Still answer: a deferred interaction with no
+            # follow-up leaves the caller watching a spinner forever.
+            await interaction.followup.send(
+                "I lost permission to post as an NPC in this channel partway "
+                "through. Check my **Manage Webhooks** permission here.",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(f"{npc} spoke.", ephemeral=True)
 
 
-def _can_host_a_webhook(channel: object) -> bool:
+def _can_host_a_webhook(channel: object, me: object) -> bool:
     """Whether an NPC can be given a name and face in this channel.
 
-    Asked by capability rather than by type: threads, voice and forum channels
-    all lack the webhook API, and a type allowlist would have to grow every
-    time Discord adds one. Anything that cannot be confirmed is refused, which
-    costs a usable channel at worst and never burns a generation.
+    Two separate ways this fails, both of which surface only once the speech
+    layer tries to post — after a 16–36s local generation has run and been
+    charged to the reply budget:
+
+    * The channel type has no webhook API at all (threads, voice, forum). Asked
+      by capability rather than by type, so the list needs no maintaining.
+    * The bot has the methods but not **Manage Webhooks**, and `webhooks()`
+      raises `Forbidden`. This is the permission people most often miss when
+      inviting the bot, so it is worth naming rather than discovering.
+
+    Anything that cannot be confirmed is refused: that costs a usable channel
+    at worst, and never burns a generation.
     """
-    return callable(getattr(channel, "webhooks", None)) and callable(
+    if not callable(getattr(channel, "webhooks", None)) or not callable(
         getattr(channel, "create_webhook", None)
-    )
+    ):
+        return False
+    permissions_for = getattr(channel, "permissions_for", None)
+    if permissions_for is None or me is None:
+        return False
+    return bool(permissions_for(me).manage_webhooks)
 
 
 def _is_dm_only_channel(interaction: Interaction, dm_role_id: int | None) -> bool:
