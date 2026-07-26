@@ -78,8 +78,11 @@ Everything is `async`. No blocking I/O in event handlers.
 - `discord.ui.Modal` allows a **maximum of 5 `TextInput` fields.** `/npc create`
   has more than 5 attributes — see the `/npc` issue for the intended split.
 - Requires **Message Content Intent** enabled in the Developer Portal *and*
-  `intents.message_content = True` in code. Symptom if missed:
-  `message.content` is silently empty.
+  `intents.message_content = True` in code. Because the code requests it,
+  Discord **rejects the connection** when the portal toggle is off — startup
+  raises `PrivilegedIntentsRequired`, naming the toggle. Loud, not silent.
+  (The silently-empty-`message.content` failure is the *other* case: code that
+  never requests the intent. Don't confuse the two.)
 - Detect "player replied to an NPC" via `message.reference.message_id` → look
   up `scene_message` → get `persona_id`.
 
