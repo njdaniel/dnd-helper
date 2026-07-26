@@ -348,10 +348,17 @@ class LoreCog(commands.GroupCog, group_name="lore"):
     async def _title_autocomplete(
         self, interaction: discord.Interaction, current: str
     ) -> list[app_commands.Choice[str]]:
-        context = await self._context(interaction)
-        if context is None:
+        # Not `_context()`: that reports "server only" with send_message, and
+        # an autocomplete interaction accepts only an autocomplete result. The
+        # helpful message would become an interaction error, so outside a guild
+        # the honest answer is no suggestions — the command callback still
+        # explains why when the user submits.
+        if interaction.guild_id is None or interaction.guild is None:
             return []
-        guild, is_dm = context
+        guild = await self.guild_for(interaction)
+        if guild is None:
+            return []
+        is_dm = _member_is_dm(interaction, guild)
         async with self.session_factory() as session:
             entries = await repo.list_lore_entries(
                 session, guild.id, visible_to=None if is_dm else "public"

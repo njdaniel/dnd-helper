@@ -206,3 +206,24 @@ async def test_whitespace_only_title_is_refused(
     async with factory() as session:
         guild = await repo.get_or_create_guild(session, 1001, "Campaign")
         assert await repo.list_lore_entries(session, guild.id) == []
+
+
+async def test_autocomplete_outside_a_guild_returns_no_choices(
+    database: tuple[AsyncEngine, SessionFactory],
+) -> None:
+    """Autocomplete may only answer with choices.
+
+    The server-only path used to reply with `send_message`, which Discord
+    rejects for an autocomplete interaction — so instead of a helpful message
+    the user got an interaction error and no suggestions.
+    """
+    _, factory = database
+    await seed_lore(factory)
+    lore = cog(factory)
+
+    outside = interaction(administrator=True)
+    outside.guild = None
+    outside.guild_id = None
+
+    assert await lore.title_autocomplete(outside, "") == []
+    outside.response.send_message.assert_not_awaited()
