@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import discord
 import pytest
@@ -177,3 +177,47 @@ def test_paragraph_break_survives_a_split_paragraph() -> None:
     # The short paragraph must not have been glued to the long one's opening.
     assert f"{short} Sentence number 0" not in joined
     assert f"{short}\n\nSentence number 0" in joined
+
+
+async def test_speak_refuses_a_scene_that_was_replaced(
+    db_session: AsyncSession,
+) -> None:
+    """A 16-36s generation is long enough for /scene end then /scene start.
+
+    Without checking, the old scene's line is posted into the new scene and
+    persisted under it — a character answering a question nobody asked.
+    """
+    guild = await repo.get_or_create_guild(db_session, 1001, "Campaign")
+    persona = await repo.create_persona(
+        db_session,
+        guild.id,
+        name="Kestrel Vane",
+        public_desc="Innkeeper",
+        personality="Wary",
+        goals="Keep the peace",
+        secrets=None,
+        knowledge_tags=[],
+        created_by=1,
+    )
+    first = await repo.create_scene(db_session, guild.id, channel_id=55, title="Before")
+    await db_session.flush()
+    stale_scene_id = first.id
+    first.status = "ended"
+    await repo.create_scene(db_session, guild.id, channel_id=55, title="After")
+    await db_session.flush()
+
+    channel = MagicMock()
+    channel.id = 55
+    channel.webhooks = AsyncMock(return_value=[])
+    channel.create_webhook = AsyncMock()
+
+    with pytest.raises(ValueError, match="scene changed"):
+        await Speech().speak(
+            db_session,
+            channel,
+            persona,
+            "The glass stops.",
+            expected_scene_id=stale_scene_id,
+        )
+
+    channel.create_webhook.assert_not_awaited()

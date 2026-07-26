@@ -92,6 +92,7 @@ class Speech:
         channel: WebhookChannel,
         persona: Persona,
         text: str,
+        expected_scene_id: int | None = None,
     ) -> discord.WebhookMessage:
         """Post all chunks as one persona and return the final Discord message.
 
@@ -108,6 +109,12 @@ class Speech:
             scene = await repo.get_active_scene(session, persona.guild_id, channel.id)
             if scene is None:
                 raise ValueError("cannot speak without an active scene")
+            # A local reply takes 16-36s, long enough for /scene end and
+            # /scene start to both land. Without this the old scene's line is
+            # posted into the new one and persisted under it, which reads at
+            # the table as a character answering a question nobody asked.
+            if expected_scene_id is not None and scene.id != expected_scene_id:
+                raise ValueError("the scene changed while this line was written")
 
             webhook = await self._get_or_create_webhook(channel)
             last_message: discord.WebhookMessage | None = None

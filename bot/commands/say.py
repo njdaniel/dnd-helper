@@ -183,7 +183,11 @@ class Say(commands.Cog):
                         tier="epic" if scene.mode == "epic" else "dialogue",
                     )
                     await self._speech.speak(
-                        session, cast(WebhookChannel, channel), persona, reply.line
+                        session,
+                        cast(WebhookChannel, channel),
+                        persona,
+                        reply.line,
+                        expected_scene_id=scene.id,
                     )
         except BudgetExceededError as error:
             await interaction.followup.send(str(error), ephemeral=True)
