@@ -161,13 +161,23 @@ class Say(commands.Cog):
                         ),
                     )
 
-                # Deliberately a second transaction. The block above ends here, so
-                # the player's line is committed and SQLite's write lock released
-                # before the model is called. A local 27B reply takes 16–36s on the
-                # reference machine; holding the write lock for that long makes any
-                # concurrent `/say` or `on_message` log fail with "database is
-                # locked". Sessions are created with expire_on_commit=False, so the
-                # objects loaded above stay usable here.
+                # Three transactions, and the split matters in both directions.
+                #
+                # The block above has ended, so the player's line is committed
+                # and SQLite's write lock released before the model is called —
+                # a local 27B reply takes 16-36s, and holding the write lock
+                # that long makes any concurrent `/say` or `on_message` log
+                # fail with "database is locked".
+                #
+                # Generation then gets a transaction of its own so the usage
+                # row commits whatever happens next. Rolled back alongside a
+                # failed delivery, a call that already cost GPU time or real
+                # money would vanish from `/usage` *and* from the daily reply
+                # guard, so repeated delivery failures could walk straight past
+                # the budget.
+                #
+                # Sessions use expire_on_commit=False, so objects loaded above
+                # stay usable here.
                 async with session_scope(self.sessions) as session:
                     reply = await generate_reply(
                         LLMEngine(
@@ -182,6 +192,11 @@ class Say(commands.Cog):
                         ),
                         tier="epic" if scene.mode == "epic" else "dialogue",
                     )
+                # Posting is separate again, and deliberately not a
+                # `session_scope`: the speech layer commits each chunk as
+                # Discord accepts it, so a failure on a later chunk cannot
+                # erase the ones players have already read.
+                async with self.sessions() as session:
                     await self._speech.speak(
                         session,
                         cast(WebhookChannel, channel),

@@ -147,6 +147,11 @@ class Speech:
                     persona_id=persona.id,
                     content=chunk,
                 )
+                # Committed per chunk, not once at the end. Discord has
+                # already shown this one; if a later send fails, rolling it
+                # back would leave the transcript missing dialogue players
+                # read, and no `scene_message` row to resolve a reply to.
+                await session.commit()
 
             assert last_message is not None
             return last_message

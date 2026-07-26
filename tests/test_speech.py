@@ -221,3 +221,32 @@ async def test_speak_refuses_a_scene_that_was_replaced(
         )
 
     channel.create_webhook.assert_not_awaited()
+
+
+def test_each_posted_chunk_is_committed_before_the_next_send() -> None:
+    """Discord has already displayed the earlier chunks.
+
+    If a later `send` fails and the surrounding transaction rolls back, the
+    transcript loses dialogue players actually read, and there is no
+    `scene_message` row left to resolve a reply-trigger against. So the commit
+    has to sit inside the per-chunk loop, after the row is written and before
+    the next send is attempted.
+
+    Asserted on structure rather than behaviour: the in-memory SQLite fixture
+    shares one connection across sessions, so it cannot distinguish committed
+    rows from merely flushed ones.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from bot.engine.speech import Speech
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(Speech.speak)))
+    loops = [node for node in ast.walk(tree) if isinstance(node, ast.For)]
+    assert len(loops) == 1, "expected exactly one per-chunk loop"
+
+    body = "\n".join(ast.unparse(statement) for statement in loops[0].body)
+    assert "create_scene_message" in body, "the row is written outside the loop"
+    assert "session.commit()" in body, "chunks are not committed as they are sent"
+    assert body.index("create_scene_message") < body.index("session.commit()")
