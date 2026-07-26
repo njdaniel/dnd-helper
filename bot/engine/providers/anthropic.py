@@ -68,9 +68,11 @@ class AnthropicProvider:
             raise ProviderError("Anthropic did not return the forced tool payload")
 
         cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
+        cache_write = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         return ProviderResult(
             payload=dict(tool_block.input),
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
             cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_write,
         )
