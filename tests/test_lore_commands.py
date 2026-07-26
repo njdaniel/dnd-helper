@@ -145,3 +145,64 @@ async def test_dm_can_remove_lore(
             await repo.get_lore_entry_by_title(session, guild.id, "Market Square")
             is None
         )
+
+
+def test_lore_titles_stay_selectable_and_fields_stay_renderable() -> None:
+    """Three ways a valid input produced an entry Discord then refused.
+
+    All three share a shape: the write succeeds and the *render* fails, so the
+    row exists while the user only ever sees an error.
+    """
+    from bot.commands.lore import (
+        CHOICE_LIMIT,
+        EMBED_FIELD_LIMIT,
+        LoreModal,
+        _entry_embed,
+    )
+    from bot.db.models import LoreEntry
+
+    # A title longer than an autocomplete choice is storable but unselectable,
+    # which breaks /lore view, /lore edit and /lore remove for that entry.
+    assert LoreModal.title_input.max_length == CHOICE_LIMIT
+
+    # Tags come from a text input with no bound of its own and land in an
+    # embed field that caps at 1,024.
+    entry = LoreEntry(
+        guild_id=1,
+        title="The Long Road",
+        body="It goes on.",
+        category="location",
+        tags=[f"tag-{index}" for index in range(300)],
+        visibility="public",
+        source="manual",
+        created_by=1,
+    )
+    embed = _entry_embed(entry)
+    for field in embed.fields:
+        assert len(field.value or "") <= EMBED_FIELD_LIMIT, field.name
+
+
+async def test_whitespace_only_title_is_refused(
+    database: tuple[AsyncEngine, SessionFactory],
+) -> None:
+    """Discord counts "   " as a filled-in required field. Stripped, it is an
+    empty title — an entry no other command can name."""
+    from bot.commands.lore import LoreModal
+
+    _, factory = database
+    modal = LoreModal(cog(factory))
+    modal.title_input._value = "   "
+    modal.body._value = "A body."
+    modal.category._value = "location"
+    modal.tags._value = ""
+    modal.visibility._value = "public"
+
+    submit = interaction(administrator=True)
+    await modal.on_submit(submit)
+
+    message = submit.response.send_message.await_args.args[0]
+    assert "needs a title" in message
+
+    async with factory() as session:
+        guild = await repo.get_or_create_guild(session, 1001, "Campaign")
+        assert await repo.list_lore_entries(session, guild.id) == []

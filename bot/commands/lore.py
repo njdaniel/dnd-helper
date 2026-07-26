@@ -19,9 +19,23 @@ PAGE_SIZE = 10
 NOT_FOUND = "No lore entry with that title was found."
 DM_ONLY = "Only a DM can use this command."
 
+# Discord's limits, which differ at each end of the same flow. A title is how
+# every other `/lore` command addresses an entry, so it has to survive the
+# round trip through an autocomplete choice — a title longer than this is
+# storable but not selectable, which makes the entry unreachable.
+CHOICE_LIMIT = 100
+EMBED_FIELD_LIMIT = 1024
+
 
 def _parse_tags(value: str) -> list[str]:
     return list(dict.fromkeys(tag.strip() for tag in value.split(",") if tag.strip()))
+
+
+def _fit_field(value: str) -> str:
+    """Fit a value into an embed field rather than lose the whole response."""
+    if len(value) <= EMBED_FIELD_LIMIT:
+        return value
+    return value[: EMBED_FIELD_LIMIT - 1] + "…"
 
 
 def _member_is_dm(interaction: discord.Interaction, guild: Guild) -> bool:
@@ -43,7 +57,9 @@ def _entry_embed(entry: LoreEntry) -> discord.Embed:
     embed = discord.Embed(title=entry.title, description=entry.body)
     embed.add_field(name="Category", value=entry.category)
     embed.add_field(name="Visibility", value=entry.visibility)
-    embed.add_field(name="Tags", value=", ".join(entry.tags) or "None", inline=False)
+    embed.add_field(
+        name="Tags", value=_fit_field(", ".join(entry.tags) or "None"), inline=False
+    )
     return embed
 
 
@@ -106,8 +122,11 @@ class LoreListView(discord.ui.View):
 
 
 class LoreModal(discord.ui.Modal):
+    # Capped at the autocomplete limit rather than the column width: a longer
+    # title stores fine and then cannot be picked from `/lore view`, `edit`, or
+    # `remove`, so the entry exists and is unreachable.
     title_input: discord.ui.TextInput[LoreModal] = discord.ui.TextInput(
-        label="Title", max_length=255
+        label="Title", max_length=CHOICE_LIMIT
     )
     body: discord.ui.TextInput[LoreModal] = discord.ui.TextInput(
         label="Body", style=discord.TextStyle.paragraph
@@ -144,6 +163,16 @@ class LoreModal(discord.ui.Modal):
         if category not in LORE_CATEGORIES or visibility not in LORE_VISIBILITIES:
             await interaction.response.send_message(
                 "Category or visibility is invalid.", ephemeral=True
+            )
+            return
+        # Discord counts whitespace towards a required field, so "   " arrives
+        # here as a filled-in title and strips to nothing. An entry titled ""
+        # cannot be named by any other command and cannot be autocompleted.
+        if not str(self.title_input).strip():
+            await interaction.response.send_message(
+                "A lore entry needs a title — every other `/lore` command finds "
+                "it by that name.",
+                ephemeral=True,
             )
             return
         guild = await self.cog.guild_for(interaction)
@@ -328,10 +357,15 @@ class LoreCog(commands.GroupCog, group_name="lore"):
                 session, guild.id, visible_to=None if is_dm else "public"
             )
         current = current.casefold()
+        # New titles are capped at CHOICE_LIMIT on the way in, so this only
+        # excludes rows written before that cap or edited directly in the
+        # database. Skipping one keeps autocomplete working for every other
+        # entry; emitting it makes Discord reject the whole response, and the
+        # user gets no suggestions at all.
         return [
             app_commands.Choice(name=entry.title, value=entry.title)
             for entry in entries
-            if current in entry.title.casefold()
+            if current in entry.title.casefold() and len(entry.title) <= CHOICE_LIMIT
         ][:25]
 
     @list_entries.autocomplete("category")
