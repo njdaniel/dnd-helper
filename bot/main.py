@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 import bot.commands
 from bot.commands.meta import configured_model
 from bot.config import Settings
-from bot.db.session import create_engine
+from bot.db.session import SessionFactory, create_engine, create_session_factory
 
 LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,9 @@ LOGGER = logging.getLogger(__name__)
 class DndHelperBot(commands.Bot):
     """Discord client with automatic command discovery and synchronization."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self, settings: Settings, session_factory: SessionFactory | None = None
+    ) -> None:
         intents = discord.Intents.default()
         # Without this, message.content arrives empty and every trigger rule
         # fails silently. Requesting it here is only half the job — it must
@@ -34,6 +36,12 @@ class DndHelperBot(commands.Bot):
 
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
+        # Extensions are auto-discovered, so a cog that needs a session factory
+        # has no other way to reach one. Attaching it here rather than letting
+        # each cog build its own engine keeps a single connection pool — and a
+        # cog whose setup() raises takes the whole bot down with it, because
+        # setup_hook never completes.
+        self.session_factory = session_factory
 
     async def setup_hook(self) -> None:
         """Load every command extension, then publish its slash commands."""
@@ -127,7 +135,7 @@ def _install_signal_handlers(
 async def run(settings: Settings) -> None:
     """Run Discord until shutdown, then release all external resources."""
     engine: AsyncEngine = create_engine(settings.database_url)
-    client = DndHelperBot(settings)
+    client = DndHelperBot(settings, create_session_factory(engine))
     _install_signal_handlers(asyncio.get_running_loop(), client.close)
 
     LOGGER.info(
@@ -148,6 +156,7 @@ async def run(settings: Settings) -> None:
     finally:
         if not client.is_closed():
             await client.close()
+        await engine.dispose()
         await engine.dispose()
         LOGGER.info("Discord client and database engine closed")
 
