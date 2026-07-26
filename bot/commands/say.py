@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
@@ -22,7 +24,10 @@ from bot.db.session import (
 )
 from bot.engine.llm import BudgetExceededError, LLMEngine
 from bot.engine.persona import generate_reply
+from bot.engine.providers import ProviderError
 from bot.engine.speech import Speech, WebhookChannel
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -57,6 +62,12 @@ class Say(commands.Cog):
         # per-channel lock live on it, and a per-call instance would start
         # both empty every time.
         self._speech = Speech()
+        # Generation *and* posting are serialized per channel. The speech
+        # layer's own lock only covers the webhook sends, so two concurrent
+        # /say calls would both generate first and post in completion order —
+        # a fast reply overtaking the request that was made before it, and
+        # each generation reading a transcript missing the other's line.
+        self._channel_locks: dict[int, asyncio.Lock] = {}
 
     async def cog_unload(self) -> None:
         if self._engine is not None:
@@ -143,7 +154,8 @@ class Say(commands.Cog):
             # concurrent `/say` or `on_message` log fail with "database is
             # locked". Sessions are created with expire_on_commit=False, so the
             # objects loaded above stay usable here.
-            async with session_scope(self.sessions) as session:
+            lock = self._channel_locks.setdefault(channel.id, asyncio.Lock())
+            async with lock, session_scope(self.sessions) as session:
                 reply = await generate_reply(
                     LLMEngine(
                         settings=self.settings,
@@ -160,6 +172,27 @@ class Say(commands.Cog):
                 )
         except BudgetExceededError as error:
             await interaction.followup.send(str(error), ephemeral=True)
+            return
+        except ProviderError as error:
+            # The interaction is already deferred, so an unhandled exception
+            # here leaves the caller watching a spinner that never resolves.
+            # Every remaining failure has to end in a follow-up.
+            LOGGER.warning("say: provider failed: %s", error)
+            await interaction.followup.send(
+                "The model did not answer. Check that the provider is running "
+                "and try again.",
+                ephemeral=True,
+            )
+            return
+        except ValueError as error:
+            # Raised by Speech.speak when the scene has ended underneath us —
+            # /scene end can land during a 16-36s generation.
+            LOGGER.info("say: scene unavailable when posting: %s", error)
+            await interaction.followup.send(
+                "The scene ended while that line was being written, so it was "
+                "not posted.",
+                ephemeral=True,
+            )
             return
         except discord.Forbidden:
             # The permission was checked up front, so reaching here means it

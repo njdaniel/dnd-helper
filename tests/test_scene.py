@@ -268,3 +268,25 @@ def test_say_refuses_channels_that_cannot_host_a_webhook() -> None:
 
     # Unknown bot member: refuse rather than guess.
     assert _can_host_a_webhook(channel(has_api=True, may_manage=True), None) is False
+
+
+def test_say_always_answers_its_deferred_interaction() -> None:
+    """`/say` defers before a 16-36s generation, so every path out has to end
+    in a follow-up. An unhandled exception leaves the caller watching a spinner
+    that never resolves — the command neither succeeds nor reports why."""
+    import inspect
+
+    from bot.commands.say import Say
+
+    source = inspect.getsource(Say.say.callback)
+    for failure in (
+        "BudgetExceededError",  # daily budget reached
+        "ProviderError",  # Ollama down, retries exhausted
+        "ValueError",  # /scene end landed mid-generation
+        "discord.Forbidden",  # Manage Webhooks removed mid-command
+    ):
+        assert f"except {failure}" in source, failure
+
+    # And generation is serialized per channel, not just the webhook sends:
+    # otherwise a fast reply overtakes the request made before it.
+    assert "self._channel_locks" in source
