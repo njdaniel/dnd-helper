@@ -254,13 +254,34 @@ PR's worktree. It has found defects that were looked at directly and cleared.
 
 ### What this has actually caught
 
-Eleven defects after CI was green — six from review, five from the independent
-pass, **none from CI**. Seven of the eleven were gaps in the *issue*, not the
-implementation: the agents built what was asked for.
+Twenty-one defects after CI was green, **none from CI**. Roughly half were gaps
+in the *issue* rather than the implementation: the agents built what was asked
+for.
 
-The lesson worth carrying: **issue quality is the bottleneck, not agent
-capability.** Time spent sharpening scope and acceptance criteria pays back
-more than time spent reviewing output.
+Three patterns account for most of them:
+
+- **Write succeeds, render fails.** The row commits and *then* Discord rejects
+  the response, so the data exists and the user sees only an error. Every
+  instance came from a limit that differs between the two ends of one flow — a
+  modal input allows 4,000 characters where an embed field allows 1,024; a
+  command option has no length bound at all. Tests pass, because the write
+  worked.
+- **A seam written but never wired.** A provider, cog, or listener that is
+  complete, tested, and never registered. The suite is green and the feature
+  does not exist.
+- **A fix that introduces the next defect.** Regrouping `/usage` by model
+  instead of tier was correct, and made the row count unbounded, which pushed
+  the message past Discord's limit so the command returned nothing. Caught only
+  by reviewing *again* after the fix.
+
+That last one is the practice worth keeping: **re-review after fixing, not just
+after writing.** A patch is new code and deserves the same pass.
+
+The lesson underneath all of it: **issue quality is the bottleneck, not agent
+capability.** Time spent sharpening scope and acceptance criteria pays back more
+than time spent reviewing output. Which is also why `handoff.py` now passes
+through issue sections it does not recognise — it silently dropped one, and the
+agent could not know it was missing.
 
 ---
 
