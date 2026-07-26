@@ -197,6 +197,35 @@ def parse_sections(body: str) -> dict[str, str]:
     return sections
 
 
+def ordered_sections(body: str) -> list[tuple[str, str]]:
+    """Every section as (heading, content), in document order, casing intact."""
+    pairs: list[tuple[str, str]] = []
+    matches = list(SECTION_HEADING_RE.finditer(body or ""))
+    for i, match in enumerate(matches):
+        start = match.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        content = body[start:end].strip()
+        if content:
+            pairs.append((match.group(1).strip(), content))
+    return pairs
+
+
+# Sections the prompt handles deliberately: two are placed in a fixed order at
+# the top, and the rest belong to the orchestration rather than the agent.
+# Everything *else* in the body is passed through verbatim — an issue section
+# this script has never heard of is far more likely to be context the agent
+# needs than something safe to drop, and a silently dropped section reads to
+# the agent as though it was never written.
+PINNED_SECTIONS = ("scope", "acceptance criteria")
+OMITTED_SECTIONS = frozenset(
+    {
+        "goal",  # restated by the issue title
+        "blocked by",  # enforced before dispatch, not by the agent
+        "manual verification",  # a human performs this; summarised separately
+    }
+)
+
+
 def get_section(sections: dict[str, str], heading: str) -> str | None:
     content = sections.get(heading.lower())
     if content is None or not content.strip():
@@ -291,10 +320,21 @@ def build_prompt(issue: dict, branch: str, definition_of_done: str) -> str:
     title = issue["title"]
     sections = parse_sections(issue.get("body") or "")
 
-    scope = get_section(sections, "Scope")
-    acceptance = get_section(sections, "Acceptance criteria")
-    gotchas = get_section(sections, "Gotchas")
     manual_verification = get_section(sections, "Manual verification")
+
+    body_sections = ordered_sections(issue.get("body") or "")
+    pinned = [
+        (heading, content)
+        for name in PINNED_SECTIONS
+        for heading, content in body_sections
+        if heading.lower() == name
+    ]
+    rest = [
+        (heading, content)
+        for heading, content in body_sections
+        if heading.lower() not in OMITTED_SECTIONS
+        and heading.lower() not in PINNED_SECTIONS
+    ]
 
     lines: list[str] = []
     lines.append(f"Read {CLAUDE_MD_DOC} and {ARCHITECTURE_DOC} before starting.")
@@ -303,18 +343,10 @@ def build_prompt(issue: dict, branch: str, definition_of_done: str) -> str:
     lines.append("")
     lines.append(f"Branch: {branch}")
 
-    if scope is not None:
+    for heading, content in pinned + rest:
         lines.append("")
-        lines.append("## Scope")
-        lines.append(scope)
-    if acceptance is not None:
-        lines.append("")
-        lines.append("## Acceptance criteria")
-        lines.append(acceptance)
-    if gotchas is not None:
-        lines.append("")
-        lines.append("## Gotchas")
-        lines.append(gotchas)
+        lines.append(f"## {heading}")
+        lines.append(content)
 
     lines.append("")
     lines.append("## Definition of done")
