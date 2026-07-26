@@ -223,6 +223,17 @@ class Say(commands.Cog):
                 ephemeral=True,
             )
             return
+        except discord.HTTPException as error:
+            # Anything else Discord refuses at post time — a persona name over
+            # the webhook username limit, a rate limit, an outage. The line has
+            # already been generated and charged, so the one thing that must
+            # not happen is silence.
+            LOGGER.warning("say: could not post the reply: %s", error)
+            await interaction.followup.send(
+                f"{npc}'s line was written, but Discord refused to post it.",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(f"{npc} spoke.", ephemeral=True)
 
 

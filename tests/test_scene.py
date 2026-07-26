@@ -284,6 +284,7 @@ def test_say_always_answers_its_deferred_interaction() -> None:
         "ProviderError",  # Ollama down, retries exhausted
         "ValueError",  # /scene end landed mid-generation
         "discord.Forbidden",  # Manage Webhooks removed mid-command
+        "discord.HTTPException",  # rate limit, oversized name, outage
     ):
         assert f"except {failure}" in source, failure
 
