@@ -152,20 +152,27 @@ class SceneService:
             await session.flush()
             return SceneView(scene=scene, location=location, personas=personas)
 
-    async def log_player_message(
+    async def log_channel_message(
         self,
         discord_guild_id: int,
         channel_id: int,
         message_id: int,
         author_name: str,
         content: str,
+        author_role_ids: frozenset[int] = frozenset(),
+        author_is_owner: bool = False,
     ) -> bool:
-        """Record a player line if this channel has a live scene.
+        """Record a line from this channel if it has a live scene.
 
         This is the only path that runs for *every* message the bot can see, so
         it looks the guild up read-only and gives up as soon as there is no
         active scene. Creating a guild row here would enrol any server the bot
         merely sits in, and would make routine conversation a database write.
+
+        The DM/player distinction is preserved because the transcript feeds
+        back into prompts: logging a DM's narration as a player line makes the
+        NPC read it as another character speaking, and the ambient trigger
+        counts it towards player activity.
         """
         async with session_scope(self.sessions) as session:
             guild = await repo.get_guild(session, discord_guild_id)
@@ -179,7 +186,15 @@ class SceneService:
                 guild.id,
                 scene_id=scene.id,
                 discord_message_id=message_id,
-                author_type="player",
+                author_type=(
+                    "dm"
+                    if author_is_owner
+                    or (
+                        guild.dm_role_id is not None
+                        and guild.dm_role_id in author_role_ids
+                    )
+                    else "player"
+                ),
                 author_name=author_name,
                 persona_id=None,
                 content=content,
@@ -298,12 +313,16 @@ class SceneCommands(commands.GroupCog, group_name="scene"):
             return
         if message.guild is None:
             return
-        await self.service.log_player_message(
+        await self.service.log_channel_message(
             message.guild.id,
             message.channel.id,
             message.id,
             message.author.display_name,
             message.content,
+            author_role_ids=frozenset(
+                role.id for role in getattr(message.author, "roles", ())
+            ),
+            author_is_owner=message.author.id == message.guild.owner_id,
         )
 
     async def _server_context(

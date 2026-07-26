@@ -87,10 +87,10 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
     service = SceneService(create_session_factory(db_session.bind))  # type: ignore[arg-type]
     await service.start(1001, "Campaign", 55, "Road", [])
 
-    assert await service.log_player_message(
+    assert await service.log_channel_message(
         1001, 55, 9001, "Player", "We wait and listen."
     )
-    assert not await service.log_player_message(1001, 99, 9002, "Player", "Elsewhere.")
+    assert not await service.log_channel_message(1001, 99, 9002, "Player", "Elsewhere.")
 
     guild = await repo.get_or_create_guild(db_session, 1001, "Campaign")
     scene = await repo.get_active_scene(db_session, guild.id, 55)
@@ -181,3 +181,37 @@ def test_speech_state_survives_across_say_invocations() -> None:
     source = inspect.getsource(Say.say.callback)
     assert "Speech(" not in source, "constructs a new Speech per invocation"
     assert "self._speech.speak(" in source
+
+
+async def test_dm_narration_is_not_logged_as_a_player_line(
+    db_session: AsyncSession,
+) -> None:
+    """The transcript feeds back into prompts, so this distinction is not
+    cosmetic: a DM's narration logged as a player line reads to the NPC as
+    another character speaking, and counts towards ambient player activity."""
+    service = SceneService(create_session_factory(db_session.bind))  # type: ignore[arg-type]
+    await service.start(1001, "Campaign", 55, "Road", [])
+
+    async with create_session_factory(db_session.bind)() as session:  # type: ignore[arg-type]
+        guild = await repo.get_or_create_guild(session, 1001, "Campaign")
+        guild.dm_role_id = 4242
+        await session.commit()
+
+    assert await service.log_channel_message(
+        1001, 55, 9101, "A Player", "I draw my sword.", frozenset({999})
+    )
+    assert await service.log_channel_message(
+        1001, 55, 9102, "The DM", "The door groans open.", frozenset({4242})
+    )
+    assert await service.log_channel_message(
+        1001, 55, 9103, "The Owner", "Roll for it.", frozenset(), True
+    )
+
+    async with create_session_factory(db_session.bind)() as session:  # type: ignore[arg-type]
+        guild = await repo.get_or_create_guild(session, 1001, "Campaign")
+        scene = await repo.get_active_scene(session, guild.id, 55)
+        assert scene is not None
+        messages = await repo.list_scene_messages(session, guild.id, scene.id)
+
+    by_author = {message.author_name: message.author_type for message in messages}
+    assert by_author == {"A Player": "player", "The DM": "dm", "The Owner": "dm"}
