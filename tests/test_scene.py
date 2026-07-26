@@ -90,9 +90,7 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
     assert await service.log_player_message(
         1001, 55, 9001, "Player", "We wait and listen."
     )
-    assert not await service.log_player_message(
-        1001, 99, 9002, "Player", "Elsewhere."
-    )
+    assert not await service.log_player_message(1001, 99, 9002, "Player", "Elsewhere.")
 
     guild = await repo.get_or_create_guild(db_session, 1001, "Campaign")
     scene = await repo.get_active_scene(db_session, guild.id, 55)
@@ -104,39 +102,66 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
 
 
 def test_say_derives_secret_visibility_from_the_channel_not_the_caller() -> None:
-    """A DM running `/say` in a public channel must not pull secrets in.
+    """A DM running `/say` in a channel a player can read must not pull secrets.
 
     The reply is posted publicly by a webhook regardless of who invoked the
     command, so deriving `is_dm_context` from the caller's role puts
     `persona.secrets` into a prompt whose output every player reads. Hard
     rule #1: the barrier is the absence of the string, not an instruction.
+
+    Denying `@everyone` is not sufficient either — a channel can deny the
+    default role and still grant one player role or member `view_channel`.
+    What matters is who can actually read it.
     """
     from unittest.mock import MagicMock
 
     from bot.commands.say import _is_dm_only_channel
 
-    def interaction_in(*, everyone_can_read: bool) -> MagicMock:
+    DM_ROLE, PLAYER_ROLE = 700, 800
+    OWNER = 1
+
+    def member(user_id: int, *role_ids: int) -> MagicMock:
         value = MagicMock()
-        value.guild = MagicMock()
-        value.guild.default_role = MagicMock()
-        value.channel = MagicMock()
-        value.channel.permissions_for.return_value.read_messages = everyone_can_read
+        value.id = user_id
+        value.roles = [MagicMock(id=role_id) for role_id in role_ids]
         return value
 
-    # The tavern: players can read it, so no secrets, whoever is asking.
-    assert _is_dm_only_channel(interaction_in(everyone_can_read=True)) is False
-    # A channel @everyone cannot read is the only place secrets belong.
-    assert _is_dm_only_channel(interaction_in(everyone_can_read=False)) is True
+    def channel_with(*members: MagicMock) -> MagicMock:
+        value = MagicMock()
+        value.guild = MagicMock()
+        value.guild.owner_id = OWNER
+        value.channel = MagicMock()
+        value.channel.members = list(members)
+        return value
 
-    # Undeterminable cases fail closed — player-facing.
+    dm = member(2, DM_ROLE)
+    player = member(3, PLAYER_ROLE)
+    owner = member(OWNER)
+
+    # Only DMs can read it: the one place secrets belong.
+    assert _is_dm_only_channel(channel_with(dm, owner), DM_ROLE) is True
+
+    # The tavern. Everyone reads it, whoever typed the command.
+    assert _is_dm_only_channel(channel_with(dm, player), DM_ROLE) is False
+
+    # The case that a default-role check alone would get wrong: @everyone is
+    # denied, but one player was granted access by an overwrite.
+    assert _is_dm_only_channel(channel_with(dm, owner, player), DM_ROLE) is False
+
+    # No DM role configured — nobody but the owner qualifies.
+    assert _is_dm_only_channel(channel_with(dm), None) is False
+
+    # Undeterminable cases fail closed: player-facing.
     no_guild = MagicMock()
     no_guild.guild = None
-    assert _is_dm_only_channel(no_guild) is False
+    assert _is_dm_only_channel(no_guild, DM_ROLE) is False
 
-    no_permissions_api = MagicMock()
-    no_permissions_api.guild = MagicMock()
-    no_permissions_api.channel = object()  # e.g. a DM channel
-    assert _is_dm_only_channel(no_permissions_api) is False
+    no_member_list = MagicMock()
+    no_member_list.guild = MagicMock()
+    no_member_list.channel = object()
+    assert _is_dm_only_channel(no_member_list, DM_ROLE) is False
+
+    assert _is_dm_only_channel(channel_with(), DM_ROLE) is False
 
 
 def test_speech_state_survives_across_say_invocations() -> None:

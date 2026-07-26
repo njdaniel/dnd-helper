@@ -136,7 +136,7 @@ class Say(commands.Cog):
                     ),
                     persona,
                     prompt,
-                    is_dm_context=_is_dm_only_channel(interaction),
+                    is_dm_context=_is_dm_only_channel(interaction, db_guild.dm_role_id),
                     tier="epic" if scene.mode == "epic" else "dialogue",
                 )
                 await self._speech.speak(
@@ -148,8 +148,8 @@ class Say(commands.Cog):
         await interaction.followup.send(f"{npc} spoke.", ephemeral=True)
 
 
-def _is_dm_only_channel(interaction: Interaction) -> bool:
-    """Whether this channel is hidden from players.
+def _is_dm_only_channel(interaction: Interaction, dm_role_id: int | None) -> bool:
+    """Whether every member who can read this channel is a DM.
 
     Secret visibility is a property of the **destination**, not the caller. A
     DM running `/say` in the tavern still posts the reply where every player
@@ -157,18 +157,33 @@ def _is_dm_only_channel(interaction: Interaction) -> bool:
     `persona.secrets` and `dm_only` lore into a prompt whose output is public.
     That is hard rule #1, and the reason the parameter is explicit at all.
 
-    Anything that cannot be positively established as hidden from `@everyone`
-    counts as player-facing. The fail-safe direction is to omit a secret that
-    could have been used, never to include one that should not have been.
+    Asking only whether `@everyone` is denied is not enough: a channel can deny
+    the default role and still grant `view_channel` to a player role or to an
+    individual member, and that channel is not private. The question that
+    actually matters is who ends up able to read it, so this checks the
+    channel's resolved member list rather than any single overwrite.
+
+    Everything undeterminable counts as player-facing — an unknown channel
+    type, no readable member list, or a list that is empty. The fail-safe
+    direction is to omit a secret that could have been used, never to include
+    one that should not have been.
     """
     guild = interaction.guild
     channel = interaction.channel
     if guild is None or channel is None:
         return False
-    permissions_for = getattr(channel, "permissions_for", None)
-    if permissions_for is None:
+    members = getattr(channel, "members", None)
+    if not members:
         return False
-    return not permissions_for(guild.default_role).read_messages
+    return all(
+        may_view_secrets(
+            user_id=member.id,
+            owner_id=guild.owner_id,
+            role_ids={role.id for role in getattr(member, "roles", ())},
+            dm_role_id=dm_role_id,
+        )
+        for member in members
+    )
 
 
 def _is_dm(interaction: Interaction, dm_role_id: int | None) -> bool:
