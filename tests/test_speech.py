@@ -110,10 +110,10 @@ async def test_speak_caches_webhook_posts_and_persists_real_ids(
     persona, scene = await _campaign(db_session)
     webhook = FakeWebhook(message_ids=[7001, 7002])
     channel = FakeChannel(55, webhook)
-    speech = Speech(db_session)
+    speech = Speech()
 
-    first = await speech.speak(channel, persona, "The road remembers.")
-    second = await speech.speak(channel, persona, "So do I.")
+    first = await speech.speak(db_session, channel, persona, "The road remembers.")
+    second = await speech.speak(db_session, channel, persona, "So do I.")
     stored = await repo.list_scene_messages(db_session, persona.guild_id, scene.id)
 
     assert (first.id, second.id) == (7001, 7002)
@@ -135,13 +135,13 @@ async def test_speak_recreates_deleted_webhook(db_session: AsyncSession) -> None
     deleted = FakeWebhook(message_ids=[])
     replacement = FakeWebhook(message_ids=[8001])
     channel = FakeChannel(55, replacement)
-    speech = Speech(db_session)
+    speech = Speech()
     speech._webhooks[channel.id] = deleted  # arrange a previously cached webhook
     deleted.send = AsyncMock(
         side_effect=discord.NotFound(AsyncMock(), "Unknown Webhook")
     )
 
-    message = await speech.speak(channel, persona, "I have returned.")
+    message = await speech.speak(db_session, channel, persona, "I have returned.")
 
     assert message.id == 8001
     assert channel.create_calls == 1
@@ -151,11 +151,11 @@ async def test_speak_serializes_posts_per_channel(db_session: AsyncSession) -> N
     persona, _ = await _campaign(db_session)
     webhook = FakeWebhook(message_ids=[9001, 9002])
     channel = FakeChannel(55, webhook)
-    speech = Speech(db_session)
+    speech = Speech()
 
     await asyncio.gather(
-        speech.speak(channel, persona, "First."),
-        speech.speak(channel, persona, "Second."),
+        speech.speak(db_session, channel, persona, "First."),
+        speech.speak(db_session, channel, persona, "Second."),
     )
 
     assert webhook.max_active_sends == 1

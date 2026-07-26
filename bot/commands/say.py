@@ -52,6 +52,10 @@ class Say(commands.Cog):
             self._engine = create_engine(settings.database_url)
             sessions = create_session_factory(self._engine)
         self.sessions = sessions
+        # One instance for the life of the cog: the webhook cache and the
+        # per-channel lock live on it, and a per-call instance would start
+        # both empty every time.
+        self._speech = Speech()
 
     async def cog_unload(self) -> None:
         if self._engine is not None:
@@ -115,6 +119,15 @@ class Say(commands.Cog):
                         session, db_guild.id, scene.id
                     ),
                 )
+
+            # Deliberately a second transaction. The block above ends here, so
+            # the player's line is committed and SQLite's write lock released
+            # before the model is called. A local 27B reply takes 16–36s on the
+            # reference machine; holding the write lock for that long makes any
+            # concurrent `/say` or `on_message` log fail with "database is
+            # locked". Sessions are created with expire_on_commit=False, so the
+            # objects loaded above stay usable here.
+            async with session_scope(self.sessions) as session:
                 reply = await generate_reply(
                     LLMEngine(
                         settings=self.settings,
@@ -123,16 +136,39 @@ class Say(commands.Cog):
                     ),
                     persona,
                     prompt,
-                    is_dm_context=_is_dm(interaction, db_guild.dm_role_id),
+                    is_dm_context=_is_dm_only_channel(interaction),
                     tier="epic" if scene.mode == "epic" else "dialogue",
                 )
-                await Speech(session).speak(
-                    cast(WebhookChannel, channel), persona, reply.line
+                await self._speech.speak(
+                    session, cast(WebhookChannel, channel), persona, reply.line
                 )
         except BudgetExceededError as error:
             await interaction.followup.send(str(error), ephemeral=True)
             return
         await interaction.followup.send(f"{npc} spoke.", ephemeral=True)
+
+
+def _is_dm_only_channel(interaction: Interaction) -> bool:
+    """Whether this channel is hidden from players.
+
+    Secret visibility is a property of the **destination**, not the caller. A
+    DM running `/say` in the tavern still posts the reply where every player
+    reads it, so deriving `is_dm_context` from the caller's role would put
+    `persona.secrets` and `dm_only` lore into a prompt whose output is public.
+    That is hard rule #1, and the reason the parameter is explicit at all.
+
+    Anything that cannot be positively established as hidden from `@everyone`
+    counts as player-facing. The fail-safe direction is to omit a secret that
+    could have been used, never to include one that should not have been.
+    """
+    guild = interaction.guild
+    channel = interaction.channel
+    if guild is None or channel is None:
+        return False
+    permissions_for = getattr(channel, "permissions_for", None)
+    if permissions_for is None:
+        return False
+    return not permissions_for(guild.default_role).read_messages
 
 
 def _is_dm(interaction: Interaction, dm_role_id: int | None) -> bool:

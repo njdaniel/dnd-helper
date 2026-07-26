@@ -155,16 +155,22 @@ class SceneService:
     async def log_player_message(
         self,
         discord_guild_id: int,
-        guild_name: str,
         channel_id: int,
         message_id: int,
         author_name: str,
         content: str,
     ) -> bool:
+        """Record a player line if this channel has a live scene.
+
+        This is the only path that runs for *every* message the bot can see, so
+        it looks the guild up read-only and gives up as soon as there is no
+        active scene. Creating a guild row here would enrol any server the bot
+        merely sits in, and would make routine conversation a database write.
+        """
         async with session_scope(self.sessions) as session:
-            guild = await repo.get_or_create_guild(
-                session, discord_guild_id, guild_name
-            )
+            guild = await repo.get_guild(session, discord_guild_id)
+            if guild is None:
+                return False
             scene = await repo.get_active_scene(session, guild.id, channel_id)
             if scene is None:
                 return False
@@ -294,7 +300,6 @@ class SceneCommands(commands.GroupCog, group_name="scene"):
             return
         await self.service.log_player_message(
             message.guild.id,
-            message.guild.name,
             message.channel.id,
             message.id,
             message.author.display_name,

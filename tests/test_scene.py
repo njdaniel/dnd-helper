@@ -88,10 +88,10 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
     await service.start(1001, "Campaign", 55, "Road", [])
 
     assert await service.log_player_message(
-        1001, "Campaign", 55, 9001, "Player", "We wait and listen."
+        1001, 55, 9001, "Player", "We wait and listen."
     )
     assert not await service.log_player_message(
-        1001, "Campaign", 99, 9002, "Player", "Elsewhere."
+        1001, 99, 9002, "Player", "Elsewhere."
     )
 
     guild = await repo.get_or_create_guild(db_session, 1001, "Campaign")
@@ -101,3 +101,58 @@ async def test_silent_player_messages_are_logged_only_in_active_scene(
     assert [(row.author_type, row.author_name, row.content) for row in messages] == [
         ("player", "Player", "We wait and listen.")
     ]
+
+
+def test_say_derives_secret_visibility_from_the_channel_not_the_caller() -> None:
+    """A DM running `/say` in a public channel must not pull secrets in.
+
+    The reply is posted publicly by a webhook regardless of who invoked the
+    command, so deriving `is_dm_context` from the caller's role puts
+    `persona.secrets` into a prompt whose output every player reads. Hard
+    rule #1: the barrier is the absence of the string, not an instruction.
+    """
+    from unittest.mock import MagicMock
+
+    from bot.commands.say import _is_dm_only_channel
+
+    def interaction_in(*, everyone_can_read: bool) -> MagicMock:
+        value = MagicMock()
+        value.guild = MagicMock()
+        value.guild.default_role = MagicMock()
+        value.channel = MagicMock()
+        value.channel.permissions_for.return_value.read_messages = everyone_can_read
+        return value
+
+    # The tavern: players can read it, so no secrets, whoever is asking.
+    assert _is_dm_only_channel(interaction_in(everyone_can_read=True)) is False
+    # A channel @everyone cannot read is the only place secrets belong.
+    assert _is_dm_only_channel(interaction_in(everyone_can_read=False)) is True
+
+    # Undeterminable cases fail closed — player-facing.
+    no_guild = MagicMock()
+    no_guild.guild = None
+    assert _is_dm_only_channel(no_guild) is False
+
+    no_permissions_api = MagicMock()
+    no_permissions_api.guild = MagicMock()
+    no_permissions_api.channel = object()  # e.g. a DM channel
+    assert _is_dm_only_channel(no_permissions_api) is False
+
+
+def test_speech_state_survives_across_say_invocations() -> None:
+    """The webhook cache and per-channel lock are process state, not request
+    state. A fresh `Speech` per command silently discards both: chunks from two
+    NPCs interleave, and Discord's ten-webhooks-per-channel cap gets hit."""
+    import inspect
+
+    from bot.commands.say import Say
+    from bot.engine.speech import Speech
+
+    # The session is per call; the caches are not.
+    assert "session" not in inspect.signature(Speech.__init__).parameters
+    assert "session" in inspect.signature(Speech.speak).parameters
+
+    # And the cog holds exactly one, rather than building one per invocation.
+    source = inspect.getsource(Say.say.callback)
+    assert "Speech(" not in source, "constructs a new Speech per invocation"
+    assert "self._speech.speak(" in source

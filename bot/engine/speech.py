@@ -82,25 +82,30 @@ def chunk_prose(text: str, *, target: int = TARGET_CHUNK_SIZE) -> list[str]:
 class Speech:
     """Serialize, post, and persist NPC speech per Discord channel."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    def __init__(self) -> None:
         self._webhooks: dict[int, discord.Webhook] = {}
         self._locks: dict[int, asyncio.Lock] = {}
 
     async def speak(
         self,
+        session: AsyncSession,
         channel: WebhookChannel,
         persona: Persona,
         text: str,
     ) -> discord.WebhookMessage:
-        """Post all chunks as one persona and return the final Discord message."""
+        """Post all chunks as one persona and return the final Discord message.
+
+        The session is per call; the webhook cache and per-channel lock are not.
+        Both belong to the process, so a caller that builds a fresh `Speech` per
+        command silently loses them — chunks from two NPCs interleave, and every
+        call re-creates a webhook against Discord's per-channel cap of ten.
+        Hold one instance for the lifetime of the cog and pass the session in.
+        """
         chunks = chunk_prose(text)
         lock = self._locks.setdefault(channel.id, asyncio.Lock())
 
         async with lock:
-            scene = await repo.get_active_scene(
-                self._session, persona.guild_id, channel.id
-            )
+            scene = await repo.get_active_scene(session, persona.guild_id, channel.id)
             if scene is None:
                 raise ValueError("cannot speak without an active scene")
 
@@ -126,7 +131,7 @@ class Speech:
 
                 last_message = message
                 await repo.create_scene_message(
-                    self._session,
+                    session,
                     persona.guild_id,
                     scene_id=scene.id,
                     discord_message_id=last_message.id,
