@@ -82,27 +82,39 @@ def chunk_prose(text: str, *, target: int = TARGET_CHUNK_SIZE) -> list[str]:
 class Speech:
     """Serialize, post, and persist NPC speech per Discord channel."""
 
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
+    def __init__(self) -> None:
         self._webhooks: dict[int, discord.Webhook] = {}
         self._locks: dict[int, asyncio.Lock] = {}
 
     async def speak(
         self,
+        session: AsyncSession,
         channel: WebhookChannel,
         persona: Persona,
         text: str,
+        expected_scene_id: int | None = None,
     ) -> discord.WebhookMessage:
-        """Post all chunks as one persona and return the final Discord message."""
+        """Post all chunks as one persona and return the final Discord message.
+
+        The session is per call; the webhook cache and per-channel lock are not.
+        Both belong to the process, so a caller that builds a fresh `Speech` per
+        command silently loses them — chunks from two NPCs interleave, and every
+        call re-creates a webhook against Discord's per-channel cap of ten.
+        Hold one instance for the lifetime of the cog and pass the session in.
+        """
         chunks = chunk_prose(text)
         lock = self._locks.setdefault(channel.id, asyncio.Lock())
 
         async with lock:
-            scene = await repo.get_active_scene(
-                self._session, persona.guild_id, channel.id
-            )
+            scene = await repo.get_active_scene(session, persona.guild_id, channel.id)
             if scene is None:
                 raise ValueError("cannot speak without an active scene")
+            # A local reply takes 16-36s, long enough for /scene end and
+            # /scene start to both land. Without this the old scene's line is
+            # posted into the new one and persisted under it, which reads at
+            # the table as a character answering a question nobody asked.
+            if expected_scene_id is not None and scene.id != expected_scene_id:
+                raise ValueError("the scene changed while this line was written")
 
             webhook = await self._get_or_create_webhook(channel)
             last_message: discord.WebhookMessage | None = None
@@ -126,7 +138,7 @@ class Speech:
 
                 last_message = message
                 await repo.create_scene_message(
-                    self._session,
+                    session,
                     persona.guild_id,
                     scene_id=scene.id,
                     discord_message_id=last_message.id,
@@ -135,6 +147,11 @@ class Speech:
                     persona_id=persona.id,
                     content=chunk,
                 )
+                # Committed per chunk, not once at the end. Discord has
+                # already shown this one; if a later send fails, rolling it
+                # back would leave the transcript missing dialogue players
+                # read, and no `scene_message` row to resolve a reply to.
+                await session.commit()
 
             assert last_message is not None
             return last_message

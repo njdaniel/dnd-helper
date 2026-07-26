@@ -14,6 +14,21 @@ from bot.db.models import (
 )
 
 
+async def get_guild(session: AsyncSession, guild_id: int) -> Guild | None:
+    """Return the Discord guild, or None if it has never been recorded.
+
+    Separate from `get_or_create_guild` because `on_message` runs on every
+    message in every channel. Creating a row from there would give any server
+    the bot merely sits in a database row as a side effect of unrelated
+    conversation, and would turn a read into a write on the hottest path in
+    the bot.
+    """
+    guild: Guild | None = await session.scalar(
+        select(Guild).where(Guild.discord_guild_id == guild_id)
+    )
+    return guild
+
+
 async def get_or_create_guild(session: AsyncSession, guild_id: int, name: str) -> Guild:
     """Return the Discord guild, creating it when first observed."""
     guild = await session.scalar(
